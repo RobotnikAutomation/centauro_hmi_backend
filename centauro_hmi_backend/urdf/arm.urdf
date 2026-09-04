@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<robot name="centauro_arm">
+  <material name="blue"><color rgba="0.12 0.35 0.75 1.0"/></material>
+  <material name="dark"><color rgba="0.12 0.12 0.15 1.0"/></material>
+  <link name="base_link"><visual><geometry><mesh filename="package://centauro_hmi_backend/meshes/base_link.stl" scale="0.22 0.22 0.08"/></geometry><material name="dark"/></visual></link>
+  <link name="shoulder_link"><visual><origin xyz="0 0 0.10"/><geometry><mesh filename="package://centauro_hmi_backend/meshes/shoulder_link.stl" scale="0.18 0.18 0.20"/></geometry><material name="blue"/></visual></link>
+  <joint name="shoulder_pan" type="revolute"><parent link="base_link"/><child link="shoulder_link"/><origin xyz="0 0 0.08"/><axis xyz="0 0 1"/><limit lower="-3.14" upper="3.14" effort="100" velocity="1.0"/></joint>
+  <link name="upper_arm_link"><visual><origin xyz="0 0 -0.21"/><geometry><mesh filename="package://centauro_hmi_backend/meshes/upper_arm_link.stl" scale="0.13 0.13 0.42"/></geometry><material name="blue"/></visual></link>
+  <joint name="shoulder_lift" type="revolute"><parent link="shoulder_link"/><child link="upper_arm_link"/><origin xyz="0 0 0.20"/><axis xyz="0 1 0"/><limit lower="-3.14" upper="3.14" effort="100" velocity="1.0"/></joint>
+  <link name="forearm_link"><visual><origin xyz="0 0 -0.20"/><geometry><mesh filename="package://centauro_hmi_backend/meshes/forearm_link.stl" scale="0.11 0.11 0.40"/></geometry><material name="blue"/></visual></link>
+  <joint name="elbow" type="revolute"><parent link="upper_arm_link"/><child link="forearm_link"/><origin xyz="0 0 -0.42"/><axis xyz="0 1 0"/><limit lower="-3.14" upper="3.14" effort="100" velocity="1.0"/></joint>
+  <link name="wrist_1_link"><visual><origin xyz="0 0 -0.07"/><geometry><mesh filename="package://centauro_hmi_backend/meshes/wrist_1_link.stl" scale="0.10 0.10 0.14"/></geometry><material name="dark"/></visual></link>
+  <joint name="wrist_1" type="revolute"><parent link="forearm_link"/><child link="wrist_1_link"/><origin xyz="0 0 -0.40"/><axis xyz="0 1 0"/><limit lower="-3.14" upper="3.14" effort="50" velocity="1.5"/></joint>
+  <link name="wrist_2_link"><visual><origin xyz="0 0 -0.06"/><geometry><mesh filename="package://centauro_hmi_backend/meshes/wrist_2_link.stl" scale="0.09 0.09 0.12"/></geometry><material name="blue"/></visual></link>
+  <joint name="wrist_2" type="revolute"><parent link="wrist_1_link"/><child link="wrist_2_link"/><origin xyz="0 0 -0.14"/><axis xyz="0 0 1"/><limit lower="-3.14" upper="3.14" effort="50" velocity="1.5"/></joint>
+  <link name="wrist_3_link"><visual><origin xyz="0 0 -0.06"/><geometry><mesh filename="package://centauro_hmi_backend/meshes/wrist_3_link.stl" scale="0.08 0.08 0.12"/></geometry><material name="dark"/></visual></link>
+  <joint name="wrist_3" type="revolute"><parent link="wrist_2_link"/><child link="wrist_3_link"/><origin xyz="0 0 -0.12"/><axis xyz="0 1 0"/><limit lower="-3.14" upper="3.14" effort="50" velocity="1.5"/></joint>
+  <link name="tool0"><visual><origin xyz="0 0 -0.06"/><geometry><mesh filename="package://centauro_hmi_backend/meshes/tool0.stl" scale="0.08 0.08 0.12"/></geometry><material name="dark"/></visual></link>
+  <joint name="tool_fixed" type="fixed"><parent link="wrist_3_link"/><child link="tool0"/><origin xyz="0 0 -0.12"/></joint>
+</robot>

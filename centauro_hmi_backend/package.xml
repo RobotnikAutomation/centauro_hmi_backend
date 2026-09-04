@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>centauro_hmi_backend</name>
+  <version>0.1.0</version>
+  <description>Backend de la HMI de teleoperacion CENTAURO.</description>
+  <maintainer email="dev@centauro.local">CENTAURO</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>python3-websockets</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>centauro_hmi_ws_examples</name>
+  <version>0.1.0</version>
+  <description>Ejemplos ejecutables de clientes WebSocket para la interfaz HMI de CENTAURO.</description>
+  <maintainer email="dev@centauro.local">CENTAURO</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>python3-websockets</exec_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

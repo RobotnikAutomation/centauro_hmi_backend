@@ -1,0 +1,13 @@
+centauro_hmi_backend:
+  ros__parameters:
+    robot.type: mock
+    websocket_host: 127.0.0.1
+    websocket_port: 8765
+    telemetry_hz: 20.0
+    command_timeout_sec: 0.5
+    initial_speed_percentage: 25.0
+    log_stats_period_sec: 5.0
+    log_payloads: true
+    log_payload_max_chars: 180
+    robot_model_max_size_bytes: 52428800
+    robot_model_chunk_size: 65536
