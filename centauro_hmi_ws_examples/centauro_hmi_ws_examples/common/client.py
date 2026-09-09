@@ -1,4 +1,6 @@
 import asyncio
+from contextlib import asynccontextmanager
+import inspect
 import json
 import uuid
 
@@ -41,5 +43,17 @@ def require_accepted(ack):
     return payload
 
 
-def connect(url, timeout):
-    return websockets.connect(url, open_timeout=timeout)
+@asynccontextmanager
+async def connect(url, timeout):
+    parameters = inspect.signature(websockets.connect).parameters
+
+    if 'open_timeout' in parameters:
+        async with websockets.connect(url, open_timeout=timeout) as socket:
+            yield socket
+        return
+
+    socket = await asyncio.wait_for(websockets.connect(url), timeout)
+    try:
+        yield socket
+    finally:
+        await socket.close()

@@ -179,10 +179,11 @@ Con `ROS_WS` apuntando a tu workspace colcon:
 
 ```bash
 cd "$ROS_WS"
-source /opt/ros/jazzy/setup.bash
-colcon build --symlink-install
+source /opt/ros/humble/setup.bash  # jazzy en Ubuntu 24.04
+source "$ROS_WS/.venv/bin/activate"
+python -m colcon build --symlink-install
 source install/setup.bash
-colcon test --packages-select centauro_hmi_backend --event-handlers console_direct+
+python -m colcon test --packages-select centauro_hmi_backend --event-handlers console_direct+
 colcon test-result --verbose
 ```
 
@@ -190,6 +191,7 @@ También se pueden ejecutar directamente desde el repositorio:
 
 ```bash
 cd "$ROS_WS/src/centauro_hmi_backend"
-source /opt/ros/jazzy/setup.bash
-PYTHONPATH="$PWD/centauro_hmi_backend:$PYTHONPATH" pytest -q centauro_hmi_backend/test
+source /opt/ros/humble/setup.bash  # jazzy en Ubuntu 24.04
+source "$ROS_WS/.venv/bin/activate"
+PYTHONPATH="$PWD/centauro_hmi_backend:$PYTHONPATH" python -m pytest -q centauro_hmi_backend/test
 ```

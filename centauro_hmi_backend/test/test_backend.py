@@ -116,3 +116,33 @@ def test_model_download_sends_ack_then_chunks():
 
     assert json.loads(websocket.messages[0])['type'] == 'ack'
     assert json.loads(websocket.messages[1])['type'] == 'robot_model_chunk'
+
+
+def test_shutdown_timeout_still_stops_loop_and_destroys_node(monkeypatch):
+    from unittest.mock import Mock
+    from centauro_hmi_backend import node as node_module
+
+    # Python 3.10's concurrent.futures.TimeoutError isn't builtins.TimeoutError.
+    class LegacyFutureTimeoutError(Exception):
+        pass
+
+    monkeypatch.setattr(node_module, 'FutureTimeoutError', LegacyFutureTimeoutError)
+    backend = HmiBackend.__new__(HmiBackend)
+    backend._shutting_down = False
+    backend.loop = Mock()
+    future = Mock()
+    future.result.side_effect = LegacyFutureTimeoutError
+
+    def submit(coroutine, loop):
+        coroutine.close()
+        return future
+
+    monkeypatch.setattr(node_module.asyncio, 'run_coroutine_threadsafe', submit)
+    destroy = Mock()
+    monkeypatch.setattr(node_module.Node, 'destroy_node', destroy)
+
+    backend.destroy_node()
+
+    future.cancel.assert_called_once_with()
+    backend.loop.call_soon_threadsafe.assert_called_once_with(backend.loop.stop)
+    destroy.assert_called_once_with()

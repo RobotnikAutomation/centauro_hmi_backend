@@ -18,7 +18,7 @@ class WebSocketTransport:
         except ImportError as exc:
             raise RuntimeError("Falta la dependencia 'websockets'. Instala: sudo apt install python3-websockets") from exc
 
-        async def websocket_handler(websocket):
+        async def websocket_handler(websocket, _path=None):
             self.clients.add(websocket)
             if self.on_connect: await self.on_connect(websocket)
             try:

@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import json
 import threading
 from ament_index_python.packages import get_package_share_directory
@@ -245,7 +246,7 @@ class HmiBackend(Node):
             future = asyncio.run_coroutine_threadsafe(self._shutdown_async(), self.loop)
             try:
                 future.result(timeout=2.0)
-            except (TimeoutError, RuntimeError):
+            except (FutureTimeoutError, RuntimeError):
                 future.cancel()
             self.loop.call_soon_threadsafe(self.loop.stop)
         super().destroy_node()

@@ -28,7 +28,7 @@ setup(
             'meshes/tool0.stl',
         ]),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'websockets>=9.1,<11'],
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
