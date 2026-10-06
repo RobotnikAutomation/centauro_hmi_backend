@@ -1,167 +1,167 @@
 # centauro_hmi_backend
 
-Nodo ROS 2 (Jazzy) que expone el contrato de teleoperación de la HMI CENTAURO
-sobre WebSocket. Mantiene separados el transporte, el contrato de mensajes y la
-implementación del robot.
+ROS 2 (Jazzy) node that exposes the CENTAURO HMI teleoperation contract
+over WebSocket. It keeps the transport, message contract, and robot
+implementation separate.
 
-Actualmente solo está implementado `robot.type: mock`: un brazo simulado de seis
-articulaciones, ligero, sin Gazebo ni MoveIt. El valor `real` está reservado
-para la futura integración con el robot físico y **hoy lanza un error al
-arrancar**.
+Currently, only `robot.type: mock` is implemented: a lightweight simulated
+six-joint arm, without Gazebo or MoveIt. The `real` value is reserved
+for future integration with the physical robot and **currently raises an error
+on startup**.
 
-Si es la primera vez que ves este repositorio, empieza por el
-[README raíz](../README.md).
+If this is your first time exploring this repository, start with the
+[root README](../README.md).
 
-## Arranque rápido
+## Quick start
 
-Con el workspace ya compilado y cargado (ver [README raíz](../README.md)):
+With the workspace already built and sourced (see the [root README](../README.md)):
 
 ```bash
 ros2 run centauro_hmi_backend hmi_backend
 ```
 
-El servidor WebSocket escucha en `ws://127.0.0.1:8765`.
+The WebSocket server listens at `ws://127.0.0.1:8765`.
 
-Normalmente conviene arrancarlo con su fichero de configuración:
+It is usually best to start it with its configuration file:
 
 ```bash
 ros2 launch centauro_hmi_backend backend.launch.py
 ```
 
-## Contrato WebSocket
+## WebSocket contract
 
-El contrato completo (payloads, respuestas, frecuencias y watchdogs) está en
-[docs/WEBSOCKET_PROTOCOL.md](docs/WEBSOCKET_PROTOCOL.md). Resumen:
+The full contract (payloads, responses, frequencies, and watchdogs) is documented in
+[docs/WEBSOCKET_PROTOCOL.md](docs/WEBSOCKET_PROTOCOL.md). Summary:
 
-Cada mensaje es JSON con esta envolvente:
+Each message is JSON with this envelope:
 
 ```json
 {"type":"command", "request_id":"optional-id", "timestamp":0.0,
  "payload":{"name":"teleoperation.enable"}}
 ```
 
-### Comandos aceptados (cliente → backend)
+### Accepted commands (client → backend)
 
-| Categoría | Comandos |
+| Category | Commands |
 | --- | --- |
-| Teleoperación | `teleoperation.enable`, `teleoperation.disable`, `teleoperation.set_mode`, `teleoperation.set_speed` |
-| Teleoperación (periódicos) | `teleoperation.deadman`, `teleoperation.freedrive` |
-| Movimiento continuo (periódicos) | `arm.joint_jog`, `arm.cartesian_jog` |
-| Planificación y ejecución | `arm.plan_to_pose`, `arm.plan_to_joint_configuration`, `arm.execute_trajectory`, `arm.execute_pending_trajectory`, `operation.cancel` |
+| Teleoperation | `teleoperation.enable`, `teleoperation.disable`, `teleoperation.set_mode`, `teleoperation.set_speed` |
+| Teleoperation (periodic) | `teleoperation.deadman`, `teleoperation.freedrive` |
+| Continuous motion (periodic) | `arm.joint_jog`, `arm.cartesian_jog` |
+| Planning and execution | `arm.plan_to_pose`, `arm.plan_to_joint_configuration`, `arm.execute_trajectory`, `arm.execute_pending_trajectory`, `operation.cancel` |
 | Poses | `poses.list`, `poses.save`, `poses.execute`, `home.set` |
-| Modelo del robot | `robot.model.get`, `robot.model.download` |
+| Robot model | `robot.model.get`, `robot.model.download` |
 
-Los comandos marcados como **periódicos** hay que reenviarlos de forma continua
-(se recomiendan 10 Hz). Un envío aislado no mantiene el deadman ni el
-movimiento: al superarse `command_timeout_sec` el backend detiene el brazo. Para
-mover el mock durante un intervalo usa `ws_jog_for_seconds_demo` o
+Commands marked as **periodic** must be resent continuously
+(10 Hz is recommended). A single message does not keep the deadman active or
+maintain motion: once `command_timeout_sec` is exceeded, the backend stops the arm. To
+move the mock for a set duration, use `ws_jog_for_seconds_demo` or
 `ws_teleoperation_demo`.
 
-### Mensajes emitidos (backend → cliente)
+### Outgoing messages (backend → client)
 
-| Mensaje | Cuándo |
+| Message | When |
 | --- | --- |
-| `ack` / `error` | Respuesta a un comando no periódico, o error de protocolo. |
-| `telemetry`, `constraints`, `robot_status`, `tool_camera` | Periódicos, a `telemetry_hz`. |
-| `teleoperation_status` | Al cambiar el estado de teleoperación (o al saltar un watchdog). |
-| `operation_status` | Mientras hay una operación activa. |
-| `planned_trajectory` | Tras planificar una pose o una configuración articular. |
-| `robot_model_chunk` | Tras `robot.model.download`, un fragmento por mensaje. |
+| `ack` / `error` | In response to a non-periodic command, or on a protocol error. |
+| `telemetry`, `constraints`, `robot_status`, `tool_camera` | Periodically, at `telemetry_hz`. |
+| `teleoperation_status` | When the teleoperation state changes (or a watchdog is triggered). |
+| `operation_status` | While an operation is active. |
+| `planned_trajectory` | After planning a pose or a joint configuration. |
+| `robot_model_chunk` | After `robot.model.download`, one chunk per message. |
 
-La imagen de `tool_camera` es un PNG de prueba codificado en base64, para que el
-cliente valide el flujo de vídeo sin hardware.
+The `tool_camera` image is a base64-encoded test PNG, allowing the
+client to validate the video stream without hardware.
 
-### Modelo del robot
+### Robot model
 
-`robot.model.get` devuelve el manifiesto y `robot.model.download` envía el
-modelo como ZIP fragmentado. El ZIP contiene `robot.urdf` y la carpeta
-`meshes/` con rutas relativas; el manifiesto incluye tamaño, SHA-256 y
-`model_id`, de modo que la HMI puede cachearlo.
+`robot.model.get` returns the manifest, and `robot.model.download` sends the
+model as a chunked ZIP archive. The ZIP contains `robot.urdf` and the
+`meshes/` directory with relative paths; the manifest includes the size, SHA-256, and
+`model_id`, so the HMI can cache it.
 
-## Configuración
+## Configuration
 
-Los parámetros se definen en [config/backend.yaml](config/backend.yaml) y los
-cargan los launch files.
+Parameters are defined in [config/backend.yaml](config/backend.yaml) and
+loaded by the launch files.
 
-| Parámetro | Defecto | Descripción |
+| Parameter | Default | Description |
 | --- | --- | --- |
-| `robot.type` | `mock` | Implementación de robot a usar. `real` aún no está implementado. |
-| `websocket_host` | `127.0.0.1` | Interfaz de escucha del servidor WebSocket. |
-| `websocket_port` | `8765` | Puerto del servidor WebSocket. |
-| `telemetry_hz` | `20.0` | Frecuencia de publicación de telemetría y estados. |
-| `command_timeout_sec` | `0.5` | Watchdog de los comandos periódicos (deadman, jog, freedrive). |
-| `initial_speed_percentage` | `25.0` | Límite de velocidad inicial, en porcentaje. |
-| `log_stats_period_sec` | `5.0` | Período del resumen de estadísticas de entrada. `<= 0` lo desactiva. |
-| `log_payloads` | `true` | Incluir muestras de payload en el resumen. |
-| `log_payload_max_chars` | `180` | Longitud máxima de cada muestra de payload. |
-| `robot_model_max_size_bytes` | `52428800` | Tamaño máximo del ZIP del modelo (50 MiB). |
-| `robot_model_chunk_size` | `65536` | Tamaño de cada fragmento de descarga (64 KiB). |
+| `robot.type` | `mock` | Robot implementation to use. `real` is not yet implemented. |
+| `websocket_host` | `127.0.0.1` | Network interface on which the WebSocket server listens. |
+| `websocket_port` | `8765` | WebSocket server port. |
+| `telemetry_hz` | `20.0` | Telemetry and status publication frequency. |
+| `command_timeout_sec` | `0.5` | Watchdog timeout for periodic commands (deadman, jog, freedrive). |
+| `initial_speed_percentage` | `25.0` | Initial speed limit, as a percentage. |
+| `log_stats_period_sec` | `5.0` | Interval between incoming-message statistics summaries. `<= 0` disables it. |
+| `log_payloads` | `true` | Include payload samples in the summary. |
+| `log_payload_max_chars` | `180` | Maximum length of each payload sample. |
+| `robot_model_max_size_bytes` | `52428800` | Maximum model ZIP size (50 MiB). |
+| `robot_model_chunk_size` | `65536` | Size of each download chunk (64 KiB). |
 
-El resumen periódico imprime mensajes por segundo, bytes por segundo, fuentes,
-comandos, errores y clientes conectados.
+The periodic summary prints messages per second, bytes per second, sources,
+commands, errors, and connected clients.
 
-Para escuchar desde otra máquina hay que cambiar `websocket_host` a `0.0.0.0`.
-El protocolo no tiene autenticación ni cifrado, así que solo debe exponerse en
-una red de confianza.
+To accept connections from another machine, change `websocket_host` to `0.0.0.0`.
+The protocol has no authentication or encryption, so it should only be exposed on
+a trusted network.
 
-## Interfaces ROS 2
+## ROS 2 interfaces
 
-| Topic | Tipo | Dirección |
+| Topic | Type | Direction |
 | --- | --- | --- |
-| `/joint_states` | `sensor_msgs/JointState` | Publica |
-| `/centauro/hmi/state` | `std_msgs/String` (telemetría JSON) | Publica |
-| `/centauro/hmi/events` | `std_msgs/String` (eventos JSON) | Publica |
-| `/centauro/hmi/planned_tool_path` | `visualization_msgs/Marker` | Publica |
-| `/centauro/hmi/command` | `std_msgs/String` (comando JSON) | Suscribe |
+| `/joint_states` | `sensor_msgs/JointState` | Publishes |
+| `/centauro/hmi/state` | `std_msgs/String` (JSON telemetry) | Publishes |
+| `/centauro/hmi/events` | `std_msgs/String` (JSON events) | Publishes |
+| `/centauro/hmi/planned_tool_path` | `visualization_msgs/Marker` | Publishes |
+| `/centauro/hmi/command` | `std_msgs/String` (JSON command) | Subscribes |
 
-`/centauro/hmi/command` acepta el mismo payload que el WebSocket, lo que permite
-probar el backend desde la línea de comandos sin cliente WebSocket.
+`/centauro/hmi/command` accepts the same payload as the WebSocket, allowing you to
+test the backend from the command line without a WebSocket client.
 
 ## Launch files
 
-| Launch | Qué arranca | Argumentos |
+| Launch | What it starts | Arguments |
 | --- | --- | --- |
-| `backend.launch.py` | Solo el nodo `hmi_backend` con `config/backend.yaml`. | — |
-| `mock_visualization.launch.py` | `robot_state_publisher` con el URDF y RViz2. | `rviz` (`true`) |
-| `complete.launch.py` | Los dos anteriores. | `rviz` (`true`) |
+| `backend.launch.py` | Only the `hmi_backend` node with `config/backend.yaml`. | None |
+| `mock_visualization.launch.py` | `robot_state_publisher` with the URDF and RViz2. | `rviz` (`true`) |
+| `complete.launch.py` | Both of the above. | `rviz` (`true`) |
 
 ```bash
 ros2 launch centauro_hmi_backend complete.launch.py
 ros2 launch centauro_hmi_backend complete.launch.py rviz:=false
 ```
 
-Al planificar una configuración articular, RViz2 muestra en verde la trayectoria
-prevista de la herramienta bajo el display `Planned tool path`.
+When planning a joint configuration, RViz2 shows the planned tool trajectory
+in green under the `Planned tool path` display.
 
-## Robot mock
+## Mock robot
 
-Brazo abstracto de seis articulaciones definido en
-[urdf/arm.urdf](urdf/arm.urdf). Cada enlace visual usa su propio STL en
-`meshes/`, para poder sustituirlos o refinarlos por separado. Cuando se integre
-un robot concreto, la HMI podrá cargar su modelo real a través de
+An abstract six-joint arm defined in
+[urdf/arm.urdf](urdf/arm.urdf). Each link's visual geometry uses its own STL in
+`meshes/`, so the meshes can be replaced or refined independently. Once a
+specific robot is integrated, the HMI will be able to load its actual model through
 `robot.model.download`.
 
-El mock simula cinemática, aplica el límite de velocidad, respeta los watchdogs
-y genera trayectorias interpoladas con estados `planning` →
+The mock simulates kinematics, applies the speed limit, respects the watchdogs,
+and generates interpolated trajectories with the states `planning` →
 `awaiting_confirmation` → `executing`.
 
-## Mapa del código
+## Code map
 
-| Módulo | Responsabilidad |
+| Module | Responsibility |
 | --- | --- |
-| `node.py` | Nodo ROS 2: parámetros, temporizadores, publicación de telemetría y despacho de comandos. |
-| `transport.py` | Servidor WebSocket: conexiones, difusión y envío unicast. |
-| `protocol.py` | Construcción y codificación de la envolvente de mensajes. |
-| `robot.py` | Fábrica `create_robot()` que selecciona la implementación según `robot.type`. |
-| `robots/mock_robot.py` | Robot simulado: estado, comandos, operaciones y eventos. |
-| `robot_model.py` | Empaquetado del URDF y las mallas en un ZIP con manifiesto y fragmentos. |
-| `stats.py` | Agregación de estadísticas de los mensajes de entrada. |
+| `node.py` | ROS 2 node: parameters, timers, telemetry publication, and command dispatch. |
+| `transport.py` | WebSocket server: connections, broadcast, and unicast delivery. |
+| `protocol.py` | Message envelope construction and encoding. |
+| `robot.py` | `create_robot()` factory that selects the implementation based on `robot.type`. |
+| `robots/mock_robot.py` | Simulated robot: state, commands, operations, and events. |
+| `robot_model.py` | Packaging the URDF and meshes into a ZIP with a manifest and chunks. |
+| `stats.py` | Aggregation of incoming-message statistics. |
 
-## Clientes de ejemplo
+## Example clients
 
-El paquete [centauro_hmi_ws_examples](../centauro_hmi_ws_examples/README.md)
-contiene clientes ejecutables que funcionan tanto contra este backend en modo
-`mock` como contra cualquier backend que implemente el mismo contrato.
+The [centauro_hmi_ws_examples](../centauro_hmi_ws_examples/README.md) package
+contains executable clients that work with both this backend in
+`mock` mode and any backend that implements the same contract.
 
 ```bash
 ros2 run centauro_hmi_ws_examples ws_protocol_smoke_test
@@ -171,15 +171,15 @@ ros2 run centauro_hmi_ws_examples ws_send_command_demo teleoperation.enable
 ros2 run centauro_hmi_ws_examples ws_send_command_demo arm.joint_jog --payload '{"velocities":[0.3,0,0,0,0,0]}'
 ```
 
-Requieren el backend arrancado y el workspace cargado en esa terminal.
+They require the backend to be running and the workspace to be sourced in that terminal.
 
 ## Tests
 
-Con `ROS_WS` apuntando a tu workspace colcon:
+With `ROS_WS` pointing to your colcon workspace:
 
 ```bash
 cd "$ROS_WS"
-source /opt/ros/humble/setup.bash  # jazzy en Ubuntu 24.04
+source /opt/ros/humble/setup.bash  # jazzy on Ubuntu 24.04
 source "$ROS_WS/.venv/bin/activate"
 python -m colcon build --symlink-install
 source install/setup.bash
@@ -187,11 +187,11 @@ python -m colcon test --packages-select centauro_hmi_backend --event-handlers co
 colcon test-result --verbose
 ```
 
-También se pueden ejecutar directamente desde el repositorio:
+Tests can also be run directly from the repository:
 
 ```bash
 cd "$ROS_WS/src/centauro_hmi_backend"
-source /opt/ros/humble/setup.bash  # jazzy en Ubuntu 24.04
+source /opt/ros/humble/setup.bash  # jazzy on Ubuntu 24.04
 source "$ROS_WS/.venv/bin/activate"
 PYTHONPATH="$PWD/centauro_hmi_backend:$PYTHONPATH" python -m pytest -q centauro_hmi_backend/test
 ```
