@@ -55,10 +55,11 @@ rosdep update
 rosdep install --from-paths src --ignore-src --rosdistro jazzy -r -y
 ```
 
-This package uses `rclpy`, `rcl_interfaces`, standard and control messages,
-launch, `robot_state_publisher`, and RViz2. The real adapter additionally
-requires the custom `robotnik_servo` package and its robot driver/controller
-dependencies to be built in this workspace or installed in a sourced overlay.
+This package uses `rclpy`, `rcl_interfaces`, standard/control/image messages,
+`robotnik_battery_msgs`, `robotnik_hardware_msgs`, `robotnik_safety_msgs`,
+`ur_dashboard_msgs`, `ur_msgs`, launch, `robot_state_publisher`, and RViz2. The
+real adapter additionally requires the custom `robotnik_servo` package and its
+robot driver/controller dependencies to be built in this workspace or installed in a sourced overlay.
 That package is not installed by `apt` through this README; include its source
 workspace before building/running this backend. The example-client package also
 uses `python3-websockets`, already included above.
@@ -128,6 +129,14 @@ loaded by the launch files.
 | `initial_speed_percentage` | `25.0` | Initial mock speed limit, as a percentage. Real mode reads the teleoperation node's `default_velocity_percentage` parameter. |
 | `robot.joint_states_topic` | `/robot/joint_states` | Joint-state feedback topic used by the real adapter. |
 | `robot.teleoperation_node_name` | `/robot/arm_teleoperation_node` in the node defaults; configurable in `config/backend.yaml` | Fully qualified teleoperation node name queried for `default_velocity_percentage`. |
+| `robot.image_streams` | `front_camera=/robot/front_rgbd_camera/color/image_raw` | List of `stream_name=/image/topic` entries; add entries to forward multiple image streams. |
+| `robot.battery_topic` | `/robot/battery_estimator/data` | Battery status source; `level` is sent as `battery_percentage`. |
+| `robot.base_status_topic` | `/robot/robotnik_base_hw_monitor/status` | Base motor status source. |
+| `robot.robot_mode_topic` | `/robot/arm/io_and_status_controller/robot_mode` | Arm robot-mode source. |
+| `robot.robot_program_running_topic` | `/robot/arm/io_and_status_controller/robot_program_running` | Arm program-running source. |
+| `robot.safety_mode_topic` | `/robot/arm/io_and_status_controller/safety_mode` | Arm safety-mode source. |
+| `robot.tool_data_topic` | `/robot/arm/io_and_status_controller/tool_data` | Tool status source. |
+| `robot.safety_module_status_topic` | `/robot/safety_module/status` | Robot safety-module status source. |
 | `log_stats_period_sec` | `5.0` | Interval between incoming-message statistics summaries. `<= 0` disables it. |
 | `log_payloads` | `true` | Include payload samples in the summary. |
 | `log_payload_max_chars` | `180` | Maximum length of each payload sample. |
@@ -168,6 +177,14 @@ unavailable, and converts the returned `0.0`-to-`1.0` fraction to a percentage.
 Teleoperation cannot be enabled until the query succeeds. Subsequent HMI speed
 commands adjust from that value. The `/joint_states` topic relays feedback after
 the first hardware sample.
+
+The real adapter forwards the latest battery, base, arm, tool, and safety
+messages in `robot_status`; `battery_percentage` comes from the battery
+message's `level` field. Each `robot.image_streams` entry creates a separate
+image subscription. Each new frame is sent once as a `tool_camera` message
+with its `stream_id`, per-stream sequence, source topic, base64-encoded raw pixel
+bytes, image encoding, dimensions, row step, endianness, and source timestamp. Add another
+`stream_name=/image/topic` entry in `backend.yaml` to forward another stream.
 
 Joint and Cartesian command values are reduced to direction inputs (`-1`, `0`,
 or `1`); the teleoperation node applies its configured velocity limits and speed

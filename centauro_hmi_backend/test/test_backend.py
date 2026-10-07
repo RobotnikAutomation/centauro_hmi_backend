@@ -72,6 +72,24 @@ def test_invalid_json_returns_invalid_command_error():
     assert response['payload']['code'] == 'invalid_command'
 
 
+def test_new_websocket_client_receives_current_real_robot_status():
+    backend = make_backend()
+    websocket = FakeWebSocket()
+    backend.transport.clients = {websocket}
+    backend.get_logger = lambda: type('Logger', (), {'info': lambda self, _: None})()
+    backend.real_status = type(
+        'StatusBridge',
+        (),
+        {'snapshot': lambda self: ({'robot_mode': {'mode': 7}}, [])},
+    )()
+
+    asyncio.run(backend.ws_connected(websocket))
+
+    response = json.loads(websocket.messages[0])
+    assert response['type'] == 'robot_status'
+    assert response['payload']['robot_mode']['mode'] == 7
+
+
 def test_periodic_command_does_not_return_ack():
     backend = make_backend()
     websocket = FakeWebSocket()

@@ -92,11 +92,24 @@ Messages emitted by the backend use the same JSON envelope
 | — | `teleoperation_status` | When teleoperation starts, ends, or its effective state changes. | `enabled`, `active`, `deadman`, `freedrive`, `mode`, `speed_percentage`, safety state, and `reason`. The Excel spreadsheet does not define a specific equivalent B2H message. |
 | B2H-001, B2H-002 | `telemetry` | Periodic. | Joint state, available pose/frame, and effective teleoperation state: `enabled`, `active`, `deadman`, `freedrive`, `mode`, `speed_percentage`, and safety state. Combines the contents of `/joint_states` and `/tf + /tf_static`. |
 | B2H-006 | `constraints` | Periodically or on change. | Blocked/limited directions or axes, maximum speed, and reason. |
-| B2H-011 | `robot_status` | Periodically or on change. | Base, arm, tool, battery, sensor, and alarm states. The Excel spreadsheet identifies `/robot/arm/io_and_status_controller/robot_mode` as the reference. |
+| B2H-011 | `robot_status` | Periodically or on change. | Mock mode emits demo values. Real mode includes the latest available `base_status`, `robot_mode`, `robot_program_running`, `safety_mode`, `tool_data`, `safety_module_status`, and `battery` fields; `battery_percentage` is copied from `battery.level`. |
 | B2H-009 | `operation_status` | During an operation and on state changes. | `operation_id`, `status`, normalized `progress`, and `result` or `error`. |
 | B2H-007 | `planned_trajectory` | After planning a movement that requires confirmation. | `operation_id`, `trajectory_id`, trajectory, validation result, and final pose. |
 | — | `robot_model_chunk` | After `robot.model.download`. | `model_id`, chunk number, total number of chunks, and Base64 ZIP data. |
-| B2H-004 | `tool_camera` | Independent stream or periodic messages, depending on the agreed transport. | Image/video, encoding, timestamp, and available camera metadata. |
+| B2H-004 | `tool_camera` | Mock mode periodically sends a test PNG; real mode sends each newly received configured image frame once. | `stream_id`, per-stream `sequence`, `topic`, `encoding: "base64"`, `format: "ros_image"`, raw pixel `data`, `image_encoding`, `width`, `height`, `step`, `is_bigendian`, and source `timestamp`. |
+
+### Robot model
+In real mode, status fields preserve their ROS message structure rather than
+being flattened. Read arm robot mode from `payload.robot_mode.mode`, whether the
+external-control program is running from
+`payload.robot_program_running.data`, and the UR arm safety mode from
+`payload.safety_mode.mode`. Safety-module values are under
+`payload.safety_module_status`, including `operation_mode`, `safety_mode`,
+`emergency_stop`, `safety_stop`, `current_speed`, `laser_mode`, and
+`laser_status`. The two `safety_mode` values are distinct: the top-level one is
+the UR arm's numeric mode; the nested one is the safety module's string mode.
+Values are the latest received samples and can have different update times;
+fields are absent until their topics have delivered a sample.
 
 ### Robot model
 

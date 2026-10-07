@@ -8,6 +8,15 @@ centauro_hmi_backend:
     initial_speed_percentage: 25.0
     robot.joint_states_topic: /robot/joint_states
     robot.teleoperation_node_name: /robot/robot/arm_teleoperation_node
+    robot.image_streams:
+      - front_camera=/robot/front_rgbd_camera/color/image_raw
+    robot.battery_topic: /robot/battery_estimator/data
+    robot.base_status_topic: /robot/robotnik_base_hw_monitor/status
+    robot.robot_mode_topic: /robot/arm/io_and_status_controller/robot_mode
+    robot.robot_program_running_topic: /robot/arm/io_and_status_controller/robot_program_running
+    robot.safety_mode_topic: /robot/arm/io_and_status_controller/safety_mode
+    robot.tool_data_topic: /robot/arm/io_and_status_controller/tool_data
+    robot.safety_module_status_topic: /robot/safety_module/status
     log_stats_period_sec: 5.0
     log_payloads: true
     log_payload_max_chars: 180

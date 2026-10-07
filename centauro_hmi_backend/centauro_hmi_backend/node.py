@@ -17,6 +17,7 @@ from .robot import create_robot
 from .stats import InboundStats, compact_payload
 from .transport import WebSocketTransport
 from .robot_model import RobotModelProvider
+from .real_status import RealStatusBridge
 
 PERIODIC_COMMANDS = {
     'teleoperation.deadman',
@@ -37,6 +38,20 @@ class HmiBackend(Node):
         self.declare_parameter('initial_speed_percentage', 25.0)
         self.declare_parameter('robot.joint_states_topic', '/robot/joint_states')
         self.declare_parameter('robot.teleoperation_node_name', '/robot/arm_teleoperation_node')
+        self.declare_parameter(
+            'robot.image_streams',
+            ['front_camera=/robot/front_rgbd_camera/color/image_raw'],
+        )
+        self.declare_parameter('robot.battery_topic', '/robot/battery_estimator/data')
+        self.declare_parameter('robot.base_status_topic', '/robot/robotnik_base_hw_monitor/status')
+        self.declare_parameter('robot.robot_mode_topic', '/robot/arm/io_and_status_controller/robot_mode')
+        self.declare_parameter(
+            'robot.robot_program_running_topic',
+            '/robot/arm/io_and_status_controller/robot_program_running',
+        )
+        self.declare_parameter('robot.safety_mode_topic', '/robot/arm/io_and_status_controller/safety_mode')
+        self.declare_parameter('robot.tool_data_topic', '/robot/arm/io_and_status_controller/tool_data')
+        self.declare_parameter('robot.safety_module_status_topic', '/robot/safety_module/status')
         self.declare_parameter('log_stats_period_sec', 5.0)
         self.declare_parameter('log_payloads', True)
         self.declare_parameter('log_payload_max_chars', 180)
@@ -51,6 +66,18 @@ class HmiBackend(Node):
             joint_states_topic=str(self.get_parameter('robot.joint_states_topic').value),
             teleoperation_node_name=str(self.get_parameter('robot.teleoperation_node_name').value),
         )
+        self.real_status = None
+        if robot_type == 'real':
+            status_parameter_names = [parameter_name for _, _, parameter_name in RealStatusBridge.STATUS_TOPICS]
+            self.real_status = RealStatusBridge(
+                self,
+                list(self.get_parameter('robot.image_streams').value),
+                str(self.get_parameter('robot.battery_topic').value),
+                {
+                    parameter_name: str(self.get_parameter(parameter_name).value)
+                    for parameter_name in status_parameter_names
+                },
+            )
         self.robot_model = None
         if robot_type == 'mock':
             self.robot_model = RobotModelProvider(
@@ -66,6 +93,7 @@ class HmiBackend(Node):
         self.lock = threading.Lock()
         self.inbound_stats = InboundStats()
         self._last_teleoperation_status = None
+        self._last_real_robot_status = None
         self.loop = asyncio.new_event_loop()
         self._publisher_task = None
         self._shutting_down = False
@@ -109,6 +137,12 @@ class HmiBackend(Node):
             f'Cliente WebSocket conectado: {websocket.remote_address}; '
             f'clientes={len(self.transport.clients)}'
         )
+        if self.real_status is not None:
+            robot_status, _ = self.real_status.snapshot()
+            if robot_status:
+                await self.transport.send_to_client(
+                    websocket, encode(message('robot_status', robot_status))
+                )
 
     async def ws_disconnected(self, websocket):
         self.get_logger().info(
@@ -121,7 +155,14 @@ class HmiBackend(Node):
             await asyncio.sleep(1.0 / float(self.get_parameter('telemetry_hz').value))
             with self.lock: payload = self.robot.snapshot()
             await self.transport.publish(encode(message('telemetry', payload)))
-            if not getattr(self.robot, 'is_real', False):
+            if self.real_status is not None:
+                robot_status, camera_streams = self.real_status.snapshot()
+                if robot_status and robot_status != self._last_real_robot_status:
+                    self._last_real_robot_status = robot_status
+                    await self.transport.publish(encode(message('robot_status', robot_status)))
+                for camera_payload in camera_streams:
+                    await self.transport.publish(encode(message('tool_camera', camera_payload)))
+            else:
                 constraints = {
                     'directions': {'x+': True, 'x-': True, 'y+': True, 'y-': True, 'z+': True, 'z-': True},
                     'max_velocity_percentage': payload['teleoperation']['speed_percentage'],

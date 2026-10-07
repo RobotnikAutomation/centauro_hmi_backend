@@ -13,6 +13,11 @@
   <exec_depend>robotnik_servo</exec_depend>
   <exec_depend>launch</exec_depend>
   <depend>sensor_msgs</depend>
+  <depend>robotnik_battery_msgs</depend>
+  <depend>robotnik_hardware_msgs</depend>
+  <depend>robotnik_safety_msgs</depend>
+  <depend>ur_dashboard_msgs</depend>
+  <depend>ur_msgs</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>control_msgs</depend>
