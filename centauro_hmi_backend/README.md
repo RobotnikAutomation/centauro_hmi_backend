@@ -4,10 +4,12 @@ ROS 2 (Jazzy) node that exposes the CENTAURO HMI teleoperation contract
 over WebSocket. It keeps the transport, message contract, and robot
 implementation separate.
 
-Currently, only `robot.type: mock` is implemented: a lightweight simulated
-six-joint arm, without Gazebo or MoveIt. The `real` value is reserved
-for future integration with the physical robot and **currently raises an error
-on startup**.
+`robot.type: mock` selects a lightweight simulated six-joint arm, without Gazebo
+or MoveIt. `robot.type: real` connects to the `robotnik_servo` teleoperation
+node for deadman, freedrive, mode, jog commands, and joint-state feedback. The
+real adapter does not provide planning, trajectory execution, pose management,
+camera streaming, or full robot status; see [Real robot mode](#real-robot-mode)
+for details.
 
 If this is your first time exploring this repository, start with the
 [root README](../README.md).
@@ -27,6 +29,39 @@ It is usually best to start it with its configuration file:
 ```bash
 ros2 launch centauro_hmi_backend backend.launch.py
 ```
+
+When `robot.type: real`, use `ros2 launch` so the launch file waits for the
+configured teleoperation node's parameter services and
+`default_velocity_percentage` before starting the backend. Running the backend
+directly with `ros2 run` bypasses that launch-time wait.
+
+## Required dependencies
+
+Install system tools and Python packages:
+
+```bash
+sudo apt update
+sudo apt install python3-colcon-common-extensions python3-rosdep \
+    python3-websockets python3-yaml python3-pytest
+```
+
+From the root of the colcon workspace, resolve the ROS dependencies declared in
+this package's `package.xml`:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+sudo rosdep init  # Run once per machine; skip if rosdep is already initialized.
+rosdep update
+rosdep install --from-paths src --ignore-src --rosdistro jazzy -r -y
+```
+
+This package uses `rclpy`, `rcl_interfaces`, standard and control messages,
+launch, `robot_state_publisher`, and RViz2. The real adapter additionally
+requires the custom `robotnik_servo` package and its robot driver/controller
+dependencies to be built in this workspace or installed in a sourced overlay.
+That package is not installed by `apt` through this README; include its source
+workspace before building/running this backend. The example-client package also
+uses `python3-websockets`, already included above.
 
 ## WebSocket contract
 
@@ -85,12 +120,14 @@ loaded by the launch files.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `robot.type` | `mock` | Robot implementation to use. `real` is not yet implemented. |
+| `robot.type` | `mock` | Robot adapter to use: `mock` or `real`. Real mode requires `robotnik_servo` and its robot interfaces to be running. |
 | `websocket_host` | `127.0.0.1` | Network interface on which the WebSocket server listens. |
 | `websocket_port` | `8765` | WebSocket server port. |
 | `telemetry_hz` | `20.0` | Telemetry and status publication frequency. |
 | `command_timeout_sec` | `0.5` | Watchdog timeout for periodic commands (deadman, jog, freedrive). |
-| `initial_speed_percentage` | `25.0` | Initial speed limit, as a percentage. |
+| `initial_speed_percentage` | `25.0` | Initial mock speed limit, as a percentage. Real mode reads the teleoperation node's `default_velocity_percentage` parameter. |
+| `robot.joint_states_topic` | `/robot/joint_states` | Joint-state feedback topic used by the real adapter. |
+| `robot.teleoperation_node_name` | `/robot/arm_teleoperation_node` in the node defaults; configurable in `config/backend.yaml` | Fully qualified teleoperation node name queried for `default_velocity_percentage`. |
 | `log_stats_period_sec` | `5.0` | Interval between incoming-message statistics summaries. `<= 0` disables it. |
 | `log_payloads` | `true` | Include payload samples in the summary. |
 | `log_payload_max_chars` | `180` | Maximum length of each payload sample. |
@@ -117,11 +154,39 @@ a trusted network.
 `/centauro/hmi/command` accepts the same payload as the WebSocket, allowing you to
 test the backend from the command line without a WebSocket client.
 
+## Real robot mode
+
+Set `robot.type: real` to connect the HMI command contract to `robotnik_servo`.
+The backend publishes deadman, freedrive, mode, speed adjustment, joint-jog, and
+Cartesian-jog inputs on the teleoperation node's `/robot/arm/servo/*` interfaces, calls
+its enable/disable services, and reads joint feedback from
+`robot.joint_states_topic` (default `/robot/joint_states`). The HMI-facing
+speed starts from the live `default_velocity_percentage` ROS parameter on the
+node configured by `robot.teleoperation_node_name`. The backend requests it
+asynchronously from that node's parameter services, retries while they are
+unavailable, and converts the returned `0.0`-to-`1.0` fraction to a percentage.
+Teleoperation cannot be enabled until the query succeeds. Subsequent HMI speed
+commands adjust from that value. The `/joint_states` topic relays feedback after
+the first hardware sample.
+
+Joint and Cartesian command values are reduced to direction inputs (`-1`, `0`,
+or `1`); the teleoperation node applies its configured velocity limits and speed
+percentage. The backend stops jog input and releases deadman/freedrive when
+their periodic HMI commands time out.
+
+Planning, trajectory execution/cancellation, pose management, home-pose storage,
+robot-model downloads, camera streaming, robot battery/base/tool status, and
+actual teleoperation safety/constraint reporting are not provided by this adapter. Such
+commands are rejected where applicable; mock camera/status/model outputs are
+not sent in real mode. The backend also omits the mock constraints message. The
+teleoperation safety field is reported as `unknown` because the teleoperation
+node does not expose it through these interfaces.
+
 ## Launch files
 
 | Launch | What it starts | Arguments |
 | --- | --- | --- |
-| `backend.launch.py` | Only the `hmi_backend` node with `config/backend.yaml`. | None |
+| `backend.launch.py` | Starts `hmi_backend` with `config/backend.yaml`; in real mode it waits for the configured teleoperation node's parameter service and `default_velocity_percentage` parameter first. | None |
 | `mock_visualization.launch.py` | `robot_state_publisher` with the URDF and RViz2. | `rviz` (`true`) |
 | `complete.launch.py` | Both of the above. | `rviz` (`true`) |
 
@@ -154,6 +219,8 @@ and generates interpolated trajectories with the states `planning` →
 | `protocol.py` | Message envelope construction and encoding. |
 | `robot.py` | `create_robot()` factory that selects the implementation based on `robot.type`. |
 | `robots/mock_robot.py` | Simulated robot: state, commands, operations, and events. |
+| `robots/real_robot.py` | Adapter for the `robotnik_servo` teleoperation node. |
+| `wait_for_teleoperation.py` | Launch helper that waits for the teleoperation node's parameter service. |
 | `robot_model.py` | Packaging the URDF and meshes into a ZIP with a manifest and chunks. |
 | `stats.py` | Aggregation of incoming-message statistics. |
 

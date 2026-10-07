@@ -8,8 +8,8 @@ def test_mock_robot_is_selected_by_configuration():
     assert isinstance(create_robot('mock', 25.0, 0.5), MockRobot)
 
 
-def test_real_robot_is_explicitly_unavailable_until_implemented():
-    with pytest.raises(RuntimeError, match='no está implementado'):
+def test_real_robot_requires_ros_node():
+    with pytest.raises(RuntimeError, match='requiere el nodo ROS'):
         create_robot('real', 25.0, 0.5)
 
 

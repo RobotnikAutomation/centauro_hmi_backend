@@ -1,11 +1,13 @@
 centauro_hmi_backend:
   ros__parameters:
-    robot.type: mock
+    robot.type: real # options: real, mock
     websocket_host: 127.0.0.1
     websocket_port: 8765
     telemetry_hz: 20.0
     command_timeout_sec: 0.5
     initial_speed_percentage: 25.0
+    robot.joint_states_topic: /robot/joint_states
+    robot.teleoperation_node_name: /robot/robot/arm_teleoperation_node
     log_stats_period_sec: 5.0
     log_payloads: true
     log_payload_max_chars: 180

@@ -35,18 +35,29 @@ class HmiBackend(Node):
         self.declare_parameter('telemetry_hz', 20.0)
         self.declare_parameter('command_timeout_sec', 0.5)
         self.declare_parameter('initial_speed_percentage', 25.0)
+        self.declare_parameter('robot.joint_states_topic', '/robot/joint_states')
+        self.declare_parameter('robot.teleoperation_node_name', '/robot/arm_teleoperation_node')
         self.declare_parameter('log_stats_period_sec', 5.0)
         self.declare_parameter('log_payloads', True)
         self.declare_parameter('log_payload_max_chars', 180)
         self.declare_parameter('robot_model_max_size_bytes', 50 * 1024 * 1024)
         self.declare_parameter('robot_model_chunk_size', 64 * 1024)
         robot_type = str(self.get_parameter('robot.type').value)
-        self.robot = create_robot(robot_type, float(self.get_parameter('initial_speed_percentage').value), float(self.get_parameter('command_timeout_sec').value))
-        self.robot_model = RobotModelProvider(
-            get_package_share_directory('centauro_hmi_backend'),
-            self.get_parameter('robot_model_max_size_bytes').value,
-            self.get_parameter('robot_model_chunk_size').value,
+        self.robot = create_robot(
+            robot_type,
+            float(self.get_parameter('initial_speed_percentage').value),
+            float(self.get_parameter('command_timeout_sec').value),
+            node=self,
+            joint_states_topic=str(self.get_parameter('robot.joint_states_topic').value),
+            teleoperation_node_name=str(self.get_parameter('robot.teleoperation_node_name').value),
         )
+        self.robot_model = None
+        if robot_type == 'mock':
+            self.robot_model = RobotModelProvider(
+                get_package_share_directory('centauro_hmi_backend'),
+                self.get_parameter('robot_model_max_size_bytes').value,
+                self.get_parameter('robot_model_chunk_size').value,
+            )
         self.command_pub = self.create_subscription(String, '/centauro/hmi/command', self.ros_command, 10)
         self.joint_pub = self.create_publisher(JointState, '/joint_states', 10)
         self.state_pub = self.create_publisher(String, '/centauro/hmi/state', 10)
@@ -110,11 +121,15 @@ class HmiBackend(Node):
             await asyncio.sleep(1.0 / float(self.get_parameter('telemetry_hz').value))
             with self.lock: payload = self.robot.snapshot()
             await self.transport.publish(encode(message('telemetry', payload)))
-            constraints = {'directions': {'x+': True, 'x-': True, 'y+': True, 'y-': True, 'z+': True, 'z-': True},
-                           'max_velocity_percentage': payload['teleoperation']['speed_percentage'], 'reason': 'none'}
-            await self.transport.publish(encode(message('constraints', constraints)))
-            await self.transport.publish(encode(message('robot_status', {'base': 'available', 'arm': 'available', 'tool': 'available', 'battery_percentage': 87.0, 'alarms': []})))
-            await self.transport.publish(encode(message('tool_camera', {'encoding': 'base64', 'format': 'png', 'data': test_image_data()})))
+            if not getattr(self.robot, 'is_real', False):
+                constraints = {
+                    'directions': {'x+': True, 'x-': True, 'y+': True, 'y-': True, 'z+': True, 'z-': True},
+                    'max_velocity_percentage': payload['teleoperation']['speed_percentage'],
+                    'reason': 'none',
+                }
+                await self.transport.publish(encode(message('constraints', constraints)))
+                await self.transport.publish(encode(message('robot_status', {'base': 'available', 'arm': 'available', 'tool': 'available', 'battery_percentage': 87.0, 'alarms': []})))
+                await self.transport.publish(encode(message('tool_camera', {'encoding': 'base64', 'format': 'png', 'data': test_image_data()})))
 
     async def ws_command(self, websocket, raw, source='websocket'):
         name = None
@@ -131,7 +146,12 @@ class HmiBackend(Node):
                 raise TypeError('payload debe ser un objeto JSON')
             name = payload.get('name') or data.get('name')
             if not name: raise ValueError('payload.name es obligatorio')
-            if name == 'robot.model.get':
+            if name in ('robot.model.get', 'robot.model.download') and not getattr(self.robot, 'supports_robot_model', True):
+                command_result = {
+                    'accepted': False,
+                    'error': {'code': 'unsupported_command', 'message': 'robot model is not available from the real teleoperation adapter'},
+                }
+            elif name == 'robot.model.get':
                 command_result = {'accepted': True, 'result': self.robot_model.manifest()}
             elif name == 'robot.model.download':
                 manifest = self.robot_model.manifest()
@@ -198,10 +218,11 @@ class HmiBackend(Node):
             self.robot.tick(1.0 / float(self.get_parameter('telemetry_hz').value))
             snapshot = self.robot.snapshot()
             events = self.robot.take_events()
-        joint = JointState()
-        joint.header.stamp = self.get_clock().now().to_msg()
-        joint.name, joint.position, joint.velocity = snapshot['joint_names'], snapshot['positions'], snapshot['velocities']
-        self.joint_pub.publish(joint)
+        if snapshot.get('feedback_available', True):
+            joint = JointState()
+            joint.header.stamp = self.get_clock().now().to_msg()
+            joint.name, joint.position, joint.velocity = snapshot['joint_names'], snapshot['positions'], snapshot['velocities']
+            self.joint_pub.publish(joint)
         state = String(); state.data = encode(message('telemetry', snapshot)); self.state_pub.publish(state)
         teleoperation = snapshot['teleoperation']
         if teleoperation != self._last_teleoperation_status:

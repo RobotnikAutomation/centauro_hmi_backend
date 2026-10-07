@@ -33,6 +33,7 @@ setup(
     entry_points={
         'console_scripts': [
             'hmi_backend = centauro_hmi_backend.node:main',
+            'wait_for_teleoperation = centauro_hmi_backend.wait_for_teleoperation:main',
         ],
     },
 )
