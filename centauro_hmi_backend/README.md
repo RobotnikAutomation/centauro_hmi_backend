@@ -57,7 +57,7 @@ rosdep install --from-paths src --ignore-src --rosdistro jazzy -r -y
 
 This package uses `rclpy`, `rcl_interfaces`, standard/control/image messages,
 `robotnik_battery_msgs`, `robotnik_hardware_msgs`, `robotnik_safety_msgs`,
-`ur_dashboard_msgs`, `ur_msgs`, launch, `robot_state_publisher`, and RViz2. The
+`ur_dashboard_msgs`, `ur_msgs`, `robot_bringup`, launch, `robot_state_publisher`, and RViz2. The
 real adapter additionally requires the custom `robotnik_servo` package and its
 robot driver/controller dependencies to be built in this workspace or installed in a sourced overlay.
 That package is not installed by `apt` through this README; include its source
@@ -82,7 +82,7 @@ Each message is JSON with this envelope:
 | --- | --- |
 | Teleoperation | `teleoperation.enable`, `teleoperation.disable`, `teleoperation.set_mode`, `teleoperation.set_speed` |
 | Teleoperation (periodic) | `teleoperation.deadman`, `teleoperation.freedrive` |
-| Continuous motion (periodic) | `arm.joint_jog`, `arm.cartesian_jog` |
+| Continuous motion (periodic) | `arm.joint_jog`, `arm.cartesian_jog`, `base.joystick` |
 | Planning and execution | `arm.plan_to_pose`, `arm.plan_to_joint_configuration`, `arm.execute_trajectory`, `arm.execute_pending_trajectory`, `operation.cancel` |
 | Poses | `poses.list`, `poses.save`, `poses.execute`, `home.set` |
 | Robot model | `robot.model.get`, `robot.model.download` |
@@ -124,10 +124,14 @@ loaded by the launch files.
 | `robot.type` | `mock` | Robot adapter to use: `mock` or `real`. Real mode requires `robotnik_servo` and its robot interfaces to be running. |
 | `websocket_host` | `127.0.0.1` | Network interface on which the WebSocket server listens. |
 | `websocket_port` | `8765` | WebSocket server port. |
+| `websocket_ping_timeout_sec` | `1800.0` | Time allowed for a WebSocket client to reply to a keepalive ping before the connection is closed (30 minutes). |
 | `telemetry_hz` | `20.0` | Telemetry and status publication frequency. |
-| `command_timeout_sec` | `0.5` | Watchdog timeout for periodic commands (deadman, jog, freedrive). |
+| `base_cmd_vel_hz` | `100.0` | Real-mode publication rate for base joystick velocity. |
+| `command_timeout_sec` | `0.5` | Watchdog timeout for periodic commands (deadman, jog, freedrive, base joystick). |
 | `initial_speed_percentage` | `25.0` | Initial mock speed limit, as a percentage. Real mode reads the teleoperation node's `default_velocity_percentage` parameter. |
 | `robot.joint_states_topic` | `/robot/joint_states` | Joint-state feedback topic used by the real adapter. |
+| `robot.base_cmd_vel_topic` | `/robot/pad_teleop/cmd_vel` | Real-mode planar base velocity output (`geometry_msgs/Twist`). |
+| `robot.pad_model` | `JOY_CONFIG` environment variable, or `ps5` | Pad profile whose `Movement` speed limits are loaded from `robot_bringup/config/base/pad/<pad_model>.yaml`. |
 | `robot.teleoperation_node_name` | `/robot/arm_teleoperation_node` in the node defaults; configurable in `config/backend.yaml` | Fully qualified teleoperation node name queried for `default_velocity_percentage`. |
 | `robot.image_streams` | `front_camera=/robot/front_rgbd_camera/color/image_raw` | List of `stream_name=/image/topic` entries; add entries to forward multiple image streams. |
 | `robot.battery_topic` | `/robot/battery_estimator/data` | Battery status source; `level` is sent as `battery_percentage`. |
@@ -159,6 +163,7 @@ a trusted network.
 | `/centauro/hmi/events` | `std_msgs/String` (JSON events) | Publishes |
 | `/centauro/hmi/planned_tool_path` | `visualization_msgs/Marker` | Publishes |
 | `/centauro/hmi/command` | `std_msgs/String` (JSON command) | Subscribes |
+| `/robot/pad_teleop/cmd_vel` | `geometry_msgs/Twist` | Publishes in real mode at `base_cmd_vel_hz` |
 
 `/centauro/hmi/command` accepts the same payload as the WebSocket, allowing you to
 test the backend from the command line without a WebSocket client.
@@ -186,10 +191,24 @@ with its `stream_id`, per-stream sequence, source topic, base64-encoded raw pixe
 bytes, image encoding, dimensions, row step, endianness, and source timestamp. Add another
 `stream_name=/image/topic` entry in `backend.yaml` to forward another stream.
 
+Real-mode `telemetry` and `teleoperation_status` use the selected arm mode
+reported on `/robot/arm/servo/teleoperation_mode/state`; mode integers map to
+`cartesian_tcp` (`0`), `cartesian_base` (`1`), and `joint` (`2`).
+
 Joint and Cartesian command values are reduced to direction inputs (`-1`, `0`,
 or `1`); the teleoperation node applies its configured velocity limits and speed
 percentage. The backend stops jog input and releases deadman/freedrive when
 their periodic HMI commands time out.
+
+The real adapter also accepts periodic `base.joystick` commands. The
+`twist.linear` and `twist.angular` arrays contain normalized axes in `[-1, 1]`;
+only linear x/y and angular z are supported. Their limits are loaded from
+`Movement.max_linear_speed` and `Movement.max_angular_speed` in the selected
+pad profile under the dynamically resolved `robot_bringup` package share path.
+The scaled values are published as `geometry_msgs/Twist` on
+`robot.base_cmd_vel_topic` at `base_cmd_vel_hz` (100 Hz by default). If updates
+stop for `command_timeout_sec`, the adapter publishes zero velocity until fresh
+joystick input arrives.
 
 Planning, trajectory execution/cancellation, pose management, home-pose storage,
 robot-model downloads, camera streaming, robot battery/base/tool status, and

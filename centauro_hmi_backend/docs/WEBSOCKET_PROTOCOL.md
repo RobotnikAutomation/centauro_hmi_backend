@@ -65,6 +65,7 @@ backend only responds with `error` if it cannot process them.
 | H2B-002 | `teleoperation.deadman` | `active: boolean` | **10 Hz** recommended; the interval must always be less than `0.5 s`. | Maintains the operator's motion authorization while `active` is `true`. | After `0.5 s` by default, revokes authorization, stops motion, and emits `teleoperation_status` with `active: false` and `reason: "deadman_timeout"`. |
 | H2B-003 | `arm.joint_jog` | `velocities: [v0, v1, v2, v3, v4, v5]` | **10 Hz** while moving. | Requests velocities for each joint, subject to limits and safety constraints. | After `0.5 s` by default, sets joint velocities to zero. The session and deadman remain active if deadman messages continue to arrive. |
 | H2B-004 | `arm.cartesian_jog` | `frame_id: string`, `twist: {"linear": [x, y, z], "angular": [rx, ry, rz]}` | **10 Hz** while moving. | Requests a Cartesian velocity relative to the specified frame, subject to limits and safety constraints. | After `0.5 s` by default, sets velocities to zero. The session and deadman remain active if deadman messages continue to arrive. |
+| — | `base.joystick` | `twist: {"linear": [x, y, 0], "angular": [0, 0, yaw]}` | Periodically while controlling the base; interval must remain below `command_timeout_sec`. | Scales normalized planar axes and publishes `geometry_msgs/Twist` to `/robot/pad_teleop/cmd_vel` at 100 Hz by default. Real mode only. | Publishes zero velocity after timeout until fresh joystick input arrives. |
 | H2B-007 | `teleoperation.freedrive` | `active: boolean` | **10 Hz** while `active` is `true`; the interval must always be less than `0.5 s`. | Keeps freedrive active while the periodic command continues to arrive and `active` is `true`. | After `0.5 s` by default, disables freedrive and emits `teleoperation_status` with `freedrive: false` and `reason: "freedrive_timeout"`. |
 
 Joint jog example:
@@ -79,6 +80,28 @@ Joint jog example:
   }
 }
 ```
+
+Base joystick example (axis values are normalized to `[-1, 1]`):
+
+```json
+{
+  "type": "command",
+  "payload": {
+    "name": "base.joystick",
+    "twist": {
+      "linear": [0.5, -0.25, 0.0],
+      "angular": [0.0, 0.0, 0.4]
+    }
+  }
+}
+```
+
+With the default PS4/PS5 pad configuration, this converts to
+`linear.x = 0.5 m/s`, `linear.y = -0.25 m/s`, and `angular.z = 0.6 rad/s`.
+Limits are loaded from the selected `robot_bringup/config/base/pad/<pad_model>.yaml`;
+linear z and angular x/y must be zero. The backend republishes the latest
+command at 100 Hz and publishes zero after `command_timeout_sec` without a fresh
+joystick message.
 
 ## Backend → HMI messages
 
@@ -97,6 +120,13 @@ Messages emitted by the backend use the same JSON envelope
 | B2H-007 | `planned_trajectory` | After planning a movement that requires confirmation. | `operation_id`, `trajectory_id`, trajectory, validation result, and final pose. |
 | — | `robot_model_chunk` | After `robot.model.download`. | `model_id`, chunk number, total number of chunks, and Base64 ZIP data. |
 | B2H-004 | `tool_camera` | Mock mode periodically sends a test PNG; real mode sends each newly received configured image frame once. | `stream_id`, per-stream `sequence`, `topic`, `encoding: "base64"`, `format: "ros_image"`, raw pixel `data`, `image_encoding`, `width`, `height`, `step`, `is_bigendian`, and source `timestamp`. |
+
+In real mode, `telemetry.payload.teleoperation.mode` and
+`teleoperation_status.payload.mode` are updated from
+`/robot/arm/servo/teleoperation_mode/state`. The ROS integer values map to
+`cartesian_tcp` (`0`), `cartesian_base` (`1`), and `joint` (`2`); `-1` maps to
+`unknown` until the first mode is selected. Telemetry carries the latest value
+periodically, and `teleoperation_status` is emitted when the value changes.
 
 ### Robot model
 In real mode, status fields preserve their ROS message structure rather than

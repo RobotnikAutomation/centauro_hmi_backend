@@ -10,6 +10,7 @@
   <depend>rcl_interfaces</depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>robot_bringup</exec_depend>
   <exec_depend>robotnik_servo</exec_depend>
   <exec_depend>launch</exec_depend>
   <depend>sensor_msgs</depend>

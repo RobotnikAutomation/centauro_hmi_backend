@@ -1,6 +1,7 @@
 import asyncio
 from concurrent.futures import TimeoutError as FutureTimeoutError
 import json
+import os
 import threading
 from ament_index_python.packages import get_package_share_directory
 
@@ -18,12 +19,14 @@ from .stats import InboundStats, compact_payload
 from .transport import WebSocketTransport
 from .robot_model import RobotModelProvider
 from .real_status import RealStatusBridge
+from .pad_config import load_pad_speed_limits
 
 PERIODIC_COMMANDS = {
     'teleoperation.deadman',
     'arm.joint_jog',
     'arm.cartesian_jog',
     'teleoperation.freedrive',
+    'base.joystick',
 }
 
 
@@ -33,10 +36,14 @@ class HmiBackend(Node):
         self.declare_parameter('robot.type', 'mock')
         self.declare_parameter('websocket_host', '127.0.0.1')
         self.declare_parameter('websocket_port', 8765)
+        self.declare_parameter('websocket_ping_timeout_sec', 1800.0)
         self.declare_parameter('telemetry_hz', 20.0)
+        self.declare_parameter('base_cmd_vel_hz', 100.0)
         self.declare_parameter('command_timeout_sec', 0.5)
         self.declare_parameter('initial_speed_percentage', 25.0)
         self.declare_parameter('robot.joint_states_topic', '/robot/joint_states')
+        self.declare_parameter('robot.base_cmd_vel_topic', '/robot/pad_teleop/cmd_vel')
+        self.declare_parameter('robot.pad_model', os.environ.get('JOY_CONFIG') or 'ps5')
         self.declare_parameter('robot.teleoperation_node_name', '/robot/arm_teleoperation_node')
         self.declare_parameter(
             'robot.image_streams',
@@ -58,6 +65,11 @@ class HmiBackend(Node):
         self.declare_parameter('robot_model_max_size_bytes', 50 * 1024 * 1024)
         self.declare_parameter('robot_model_chunk_size', 64 * 1024)
         robot_type = str(self.get_parameter('robot.type').value)
+        base_max_linear_speed, base_max_angular_speed = (1.0, 1.5)
+        if robot_type == 'real':
+            base_max_linear_speed, base_max_angular_speed = load_pad_speed_limits(
+                self.get_parameter('robot.pad_model').value
+            )
         self.robot = create_robot(
             robot_type,
             float(self.get_parameter('initial_speed_percentage').value),
@@ -65,6 +77,9 @@ class HmiBackend(Node):
             node=self,
             joint_states_topic=str(self.get_parameter('robot.joint_states_topic').value),
             teleoperation_node_name=str(self.get_parameter('robot.teleoperation_node_name').value),
+            base_cmd_vel_topic=str(self.get_parameter('robot.base_cmd_vel_topic').value),
+            base_max_linear_speed=base_max_linear_speed,
+            base_max_angular_speed=base_max_angular_speed,
         )
         self.real_status = None
         if robot_type == 'real':
@@ -103,10 +118,16 @@ class HmiBackend(Node):
             self.ws_command,
             self.ws_connected,
             self.ws_disconnected,
+            ping_timeout_sec=float(self.get_parameter('websocket_ping_timeout_sec').value),
         )
         threading.Thread(target=self._run_loop, daemon=True).start()
         hz = float(self.get_parameter('telemetry_hz').value)
         self.create_timer(1.0 / hz, self.tick)
+        if getattr(self.robot, 'is_real', False):
+            base_cmd_vel_hz = float(self.get_parameter('base_cmd_vel_hz').value)
+            if base_cmd_vel_hz <= 0.0:
+                raise ValueError('base_cmd_vel_hz must be greater than zero')
+            self.create_timer(1.0 / base_cmd_vel_hz, self.robot.publish_base_velocity)
         stats_period = float(self.get_parameter('log_stats_period_sec').value)
         if stats_period > 0.0:
             self.create_timer(stats_period, self.log_inbound_stats)

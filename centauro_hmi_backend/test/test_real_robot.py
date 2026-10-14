@@ -1,8 +1,12 @@
+import pytest
+
 from centauro_hmi_backend.robots.real_robot import (
     ROBOT_JOINT_NAMES,
     RobotnikTeleoperationRobot,
 )
 from centauro_hmi_backend.robot import create_robot
+from centauro_hmi_backend.pad_config import load_pad_speed_limits
+from std_msgs.msg import Int32
 
 
 class FakePublisher:
@@ -80,6 +84,21 @@ def make_robot(parameter_client=None):
     return robot, node
 
 
+def test_pad_speed_limits_are_loaded_from_robot_bringup_configs():
+    assert load_pad_speed_limits('ps4') == (1.0, 1.5)
+    assert load_pad_speed_limits('ps5') == (1.0, 1.5)
+
+
+def test_ros_teleoperation_mode_feedback_updates_websocket_snapshot():
+    robot, node = make_robot()
+    mode_message = Int32()
+    mode_message.data = 1
+
+    node.subscriptions['/robot/arm/servo/teleoperation_mode/state'](mode_message)
+
+    assert robot.snapshot()['teleoperation']['mode'] == 'cartesian_base'
+
+
 def test_factory_selects_real_adapter():
     node = FakeNode()
     parameter_client = FakeParameterClient()
@@ -152,6 +171,45 @@ def test_cartesian_jog_maps_frame_and_direction():
     assert command.header.frame_id == 'robot_arm_tool0'
     assert [command.twist.linear.x, command.twist.linear.y, command.twist.linear.z,
             command.twist.angular.x, command.twist.angular.y, command.twist.angular.z] == [1.0, 0.0, -1.0, 0.0, 1.0, 0.0]
+
+
+def test_base_joystick_scales_planar_axes_and_publishes_twist():
+    robot, node = make_robot()
+
+    result = robot.command('base.joystick', {
+        'twist': {'linear': [0.5, -0.25, 0.0], 'angular': [0.0, 0.0, 0.4]},
+    })
+    robot.publish_base_velocity()
+
+    assert result['accepted']
+    command = node.publishers['/robot/pad_teleop/cmd_vel'].messages[-1]
+    assert (command.linear.x, command.linear.y, command.linear.z) == (0.5, -0.25, 0.0)
+    assert (command.angular.x, command.angular.y, command.angular.z) == pytest.approx((0.0, 0.0, 0.6))
+
+
+def test_base_joystick_rejects_out_of_range_axes():
+    robot, node = make_robot()
+
+    result = robot.command('base.joystick', {
+        'twist': {'linear': [1.1, 0.0, 0.0], 'angular': [0.0, 0.0, 0.0]},
+    })
+
+    assert result['accepted'] is False
+    assert result['error']['code'] == 'invalid_base_joystick'
+    assert node.publishers['/robot/pad_teleop/cmd_vel'].messages == []
+
+
+def test_base_joystick_watchdog_publishes_zero(monkeypatch):
+    robot, node = make_robot()
+    robot.command('base.joystick', {
+        'twist': {'linear': [1.0, 0.0, 0.0], 'angular': [0.0, 0.0, 0.0]},
+    })
+    monkeypatch.setattr('centauro_hmi_backend.robots.real_robot.time.monotonic', lambda: robot._last_base_command + 1.0)
+
+    robot.publish_base_velocity()
+
+    command = node.publishers['/robot/pad_teleop/cmd_vel'].messages[-1]
+    assert (command.linear.x, command.linear.y, command.angular.z) == (0.0, 0.0, 0.0)
 
 
 def test_joint_state_feedback_is_reordered_to_hmi_order():

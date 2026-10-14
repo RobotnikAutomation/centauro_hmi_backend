@@ -5,10 +5,12 @@ import importlib
 class WebSocketTransport:
     """Optional transport adapter; the backend core does not depend on it."""
 
-    def __init__(self, host, port, on_message, on_connect=None, on_disconnect=None):
+    def __init__(self, host, port, on_message, on_connect=None, on_disconnect=None,
+                 ping_timeout_sec=1800.0):
         self.host, self.port = host, port
         self.on_message, self.on_connect = on_message, on_connect
         self.on_disconnect = on_disconnect
+        self.ping_timeout_sec = float(ping_timeout_sec)
         self.clients = set()
         self._server = None
 
@@ -30,7 +32,12 @@ class WebSocketTransport:
                 self.clients.discard(websocket)
                 if self.on_disconnect: await self.on_disconnect(websocket)
 
-        self._server = await websockets.serve(websocket_handler, self.host, self.port)
+        self._server = await websockets.serve(
+            websocket_handler,
+            self.host,
+            self.port,
+            ping_timeout=self.ping_timeout_sec,
+        )
 
     async def publish(self, raw):
         if self.clients:

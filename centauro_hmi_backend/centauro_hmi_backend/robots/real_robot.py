@@ -3,7 +3,7 @@ import threading
 import time
 
 from control_msgs.msg import JointJog
-from geometry_msgs.msg import TwistStamped
+from geometry_msgs.msg import Twist, TwistStamped
 from rclpy.parameter_client import AsyncParameterClient
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float32, Int32
@@ -19,6 +19,12 @@ ROBOT_JOINT_NAMES = [
     "robot_arm_wrist_2_joint",
     "robot_arm_wrist_3_joint",
 ]
+TELEOPERATION_MODE_NAMES = {
+    -1: "unknown",
+    0: "cartesian_tcp",
+    1: "cartesian_base",
+    2: "joint",
+}
 
 
 class RobotnikTeleoperationRobot:
@@ -28,9 +34,15 @@ class RobotnikTeleoperationRobot:
     is_real = True
 
     def __init__(self, node, command_timeout_sec, joint_states_topic,
-                 teleoperation_node_name="/robot/arm_teleoperation_node", parameter_client=None):
+                 teleoperation_node_name="/robot/arm_teleoperation_node", parameter_client=None,
+                 base_cmd_vel_topic="/robot/pad_teleop/cmd_vel", base_max_linear_speed=1.0,
+                 base_max_angular_speed=1.5):
         self.node = node
         self.command_timeout_sec = command_timeout_sec
+        self.base_max_linear_speed = float(base_max_linear_speed)
+        self.base_max_angular_speed = float(base_max_angular_speed)
+        self._base_velocity = [0.0, 0.0, 0.0]
+        self._last_base_command = time.monotonic()
         self._teleoperation_speed_percentage = None
         self.speed_percentage = 0.0
         self._teleoperation_speed_loaded = False
@@ -42,7 +54,7 @@ class RobotnikTeleoperationRobot:
         self.enabled = False
         self.deadman = False
         self.freedrive = False
-        self.mode = "joint"
+        self.mode = "unknown"
         self.last_status_reason = "waiting_for_teleoperation_node"
         self.last_deadman = time.monotonic()
         self.last_freedrive_command = time.monotonic()
@@ -68,8 +80,15 @@ class RobotnikTeleoperationRobot:
         self._joint_pub = node.create_publisher(
             JointJog, "/robot/arm/servo/joint_teleoperation", 10
         )
+        self._base_cmd_vel_pub = node.create_publisher(Twist, base_cmd_vel_topic, 10)
         self._joint_states_sub = node.create_subscription(
             JointState, joint_states_topic, self._joint_state_callback, 10
+        )
+        self._teleoperation_mode_state_sub = node.create_subscription(
+            Int32,
+            "/robot/arm/servo/teleoperation_mode/state",
+            self._teleoperation_mode_state_callback,
+            10,
         )
         self._enable_client = node.create_client(
             Trigger, "/robot/arm/servo/enable_arm_teleoperation"
@@ -226,6 +245,13 @@ class RobotnikTeleoperationRobot:
             self._velocities = [robot_velocities[index] for index in reorder]
             self._feedback_available = True
 
+    def _teleoperation_mode_state_callback(self, msg):
+        mode = TELEOPERATION_MODE_NAMES.get(msg.data)
+        if mode is None:
+            return
+        with self._lock:
+            self.mode = mode
+
     def _joint_jog(self, payload):
         values = payload.get("velocities")
         if not isinstance(values, (list, tuple)) or len(values) != len(JOINT_NAMES):
@@ -276,6 +302,47 @@ class RobotnikTeleoperationRobot:
             self.last_motion_command = time.monotonic()
         return {"accepted": True}
 
+    def _base_joystick(self, payload):
+        twist = payload.get("twist", {})
+        if not isinstance(twist, dict):
+            return self._rejected("invalid_base_joystick", "twist must be an object")
+        linear, angular = twist.get("linear"), twist.get("angular")
+        if not isinstance(linear, (list, tuple)) or len(linear) != 3:
+            return self._rejected("invalid_base_joystick", "twist.linear must contain three values")
+        if not isinstance(angular, (list, tuple)) or len(angular) != 3:
+            return self._rejected("invalid_base_joystick", "twist.angular must contain three values")
+        try:
+            axes = [float(value) for value in (*linear, *angular)]
+        except (TypeError, ValueError) as exc:
+            return self._rejected("invalid_base_joystick", str(exc))
+        if not all(math.isfinite(value) and -1.0 <= value <= 1.0 for value in axes):
+            return self._rejected(
+                "invalid_base_joystick", "joystick axes must be finite values between -1 and 1"
+            )
+        if axes[2] != 0.0 or axes[3] != 0.0 or axes[4] != 0.0:
+            return self._rejected(
+                "invalid_base_joystick", "base joystick supports linear x/y and angular z only"
+            )
+        with self._lock:
+            self._base_velocity = [
+                axes[0] * self.base_max_linear_speed,
+                axes[1] * self.base_max_linear_speed,
+                axes[5] * self.base_max_angular_speed,
+            ]
+            self._last_base_command = time.monotonic()
+        return {"accepted": True}
+
+    def publish_base_velocity(self):
+        with self._lock:
+            velocity = self._base_velocity
+            if time.monotonic() - self._last_base_command > self.command_timeout_sec:
+                velocity = [0.0, 0.0, 0.0]
+                self._base_velocity = velocity
+            msg = Twist()
+            msg.linear.x, msg.linear.y = velocity[0], velocity[1]
+            msg.angular.z = velocity[2]
+            self._base_cmd_vel_pub.publish(msg)
+
     def command(self, name, payload):
         with self._lock:
             if name == "teleoperation.enable":
@@ -324,6 +391,8 @@ class RobotnikTeleoperationRobot:
                 return self._joint_jog(payload)
             if name == "arm.cartesian_jog":
                 return self._cartesian_jog(payload)
+            if name == "base.joystick":
+                return self._base_joystick(payload)
             return self._rejected("unsupported_command", f"{name} is not supported by the teleoperation node")
 
     def tick(self, dt):
