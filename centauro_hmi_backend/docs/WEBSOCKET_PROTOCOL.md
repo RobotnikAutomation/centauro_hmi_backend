@@ -65,7 +65,7 @@ backend only responds with `error` if it cannot process them.
 | H2B-002 | `teleoperation.deadman` | `active: boolean` | **10 Hz** recommended; the interval must always be less than `0.5 s`. | Maintains the operator's motion authorization while `active` is `true`. | After `0.5 s` by default, revokes authorization, stops motion, and emits `teleoperation_status` with `active: false` and `reason: "deadman_timeout"`. |
 | H2B-003 | `arm.joint_jog` | `velocities: [v0, v1, v2, v3, v4, v5]` | **10 Hz** while moving. | Requests velocities for each joint, subject to limits and safety constraints. | After `0.5 s` by default, sets joint velocities to zero. The session and deadman remain active if deadman messages continue to arrive. |
 | H2B-004 | `arm.cartesian_jog` | `frame_id: string`, `twist: {"linear": [x, y, z], "angular": [rx, ry, rz]}` | **10 Hz** while moving. | Requests a Cartesian velocity relative to the specified frame, subject to limits and safety constraints. | After `0.5 s` by default, sets velocities to zero. The session and deadman remain active if deadman messages continue to arrive. |
-| — | `base.joystick` | `twist: {"linear": [x, y, 0], "angular": [0, 0, yaw]}` | Periodically while controlling the base; interval must remain below `command_timeout_sec`. | Scales normalized planar axes and publishes `geometry_msgs/Twist` to `/robot/pad_teleop/cmd_vel` at 100 Hz by default. Real mode only. | Publishes zero velocity after timeout until fresh joystick input arrives. |
+| — | `base.joystick` | `twist: {"linear": [x, y, 0], "angular": [0, 0, yaw]}` | Periodically while controlling the base; interval must remain below `command_timeout_sec`. | Scales normalized planar axes. Real mode publishes `geometry_msgs/Twist` to `/robot/pad_teleop/cmd_vel`; mock mode integrates planar motion and broadcasts `base_link -> sim_base`. Both run at `base_cmd_vel_hz` (100 Hz by default). | Real mode publishes zero velocity; mock mode holds the last pose until fresh joystick input arrives. |
 | H2B-007 | `teleoperation.freedrive` | `active: boolean` | **10 Hz** while `active` is `true`; the interval must always be less than `0.5 s`. | Keeps freedrive active while the periodic command continues to arrive and `active` is `true`. | After `0.5 s` by default, disables freedrive and emits `teleoperation_status` with `freedrive: false` and `reason: "freedrive_timeout"`. |
 | — | `arm.cartesian_target` | `pose: {"position": [x, y, z], "orientation": [qx, qy, qz, qw]}`, optional `frame_id: string` (default `ik.base_frame`) | Periodically while following; interval must remain below `command_timeout_sec`. | Broadcasts the pose as TF `ik.target_frame` and keeps a continuous goal on the `cartesian_kinematics_for_hmi_teleoperation` IK action server. IK solutions are streamed back as `ik_solution`. Does not move the robot. | After `0.5 s` by default, cancels the IK goal; a final `ik_solution` is emitted. |
 
@@ -100,9 +100,13 @@ Base joystick example (axis values are normalized to `[-1, 1]`):
 With the default PS4/PS5 pad configuration, this converts to
 `linear.x = 0.5 m/s`, `linear.y = -0.25 m/s`, and `angular.z = 0.6 rad/s`.
 Limits are loaded from the selected `robot_bringup/config/base/pad/<pad_model>.yaml`;
-linear z and angular x/y must be zero. The backend republishes the latest
-command at 100 Hz and publishes zero after `command_timeout_sec` without a fresh
-joystick message.
+linear z and angular x/y must be zero. In real mode, the backend republishes the
+latest command at 100 Hz and publishes zero after `command_timeout_sec` without
+a fresh joystick message. In mock mode, it broadcasts `base_link -> sim_base`
+at the same rate, integrating local-frame x/y translation and yaw using elapsed
+ROS time. It holds that pose when input times out and never publishes to the
+real base velocity topic. In both modes, base control is independent of arm
+enable, deadman, freedrive, and speed percentage.
 
 ## Backend → HMI messages
 

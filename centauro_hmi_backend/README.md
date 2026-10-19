@@ -126,7 +126,7 @@ loaded by the launch files.
 | `websocket_port` | `8765` | WebSocket server port. |
 | `websocket_ping_timeout_sec` | `1800.0` | Time allowed for a WebSocket client to reply to a keepalive ping before the connection is closed (30 minutes). |
 | `telemetry_hz` | `20.0` | Telemetry and status publication frequency. |
-| `base_cmd_vel_hz` | `100.0` | Real-mode publication rate for base joystick velocity. |
+| `base_cmd_vel_hz` | `100.0` | Real-mode base velocity publication rate; mock-mode base integration and TF publication rate. |
 | `command_timeout_sec` | `0.5` | Watchdog timeout for periodic commands (deadman, jog, freedrive, base joystick). |
 | `initial_speed_percentage` | `25.0` | Initial mock speed limit, as a percentage. Real mode reads the teleoperation node's `default_velocity_percentage` parameter. |
 | `robot.joint_states_topic` | `/robot/joint_states` | Joint-state feedback topic used by the real adapter. |
@@ -164,6 +164,7 @@ a trusted network.
 | `/centauro/hmi/planned_tool_path` | `visualization_msgs/Marker` | Publishes |
 | `/centauro/hmi/command` | `std_msgs/String` (JSON command) | Subscribes |
 | `/robot/pad_teleop/cmd_vel` | `geometry_msgs/Twist` | Publishes in real mode at `base_cmd_vel_hz` |
+| `/tf` | `tf2_msgs/TFMessage` | Broadcasts `base_link -> sim_base` in mock mode at `base_cmd_vel_hz` |
 
 `/centauro/hmi/command` accepts the same payload as the WebSocket, allowing you to
 test the backend from the command line without a WebSocket client.
@@ -246,6 +247,42 @@ The mock simulates kinematics, applies the speed limit, respects the watchdogs,
 and generates interpolated trajectories with the states `planning` →
 `awaiting_confirmation` → `executing`.
 
+### Mock base motion
+
+With `robot.type: mock`, the same periodic `base.joystick` command used by the
+real adapter moves a simulated base. The backend broadcasts the dynamic TF
+`base_link -> sim_base` at `base_cmd_vel_hz` (100 Hz by default), including when
+stationary. It starts at the origin with zero yaw. Linear x/y move in the
+simulated base's local frame; angular z rotates it about the vertical axis.
+Translation z and rotation about x/y remain zero. Integration uses elapsed ROS
+time, independently of the arm's telemetry rate.
+
+Axes must be finite, normalized to `[-1, 1]`, and planar. Both adapters use the
+same validation and speed limits from the selected `robot.pad_model` profile.
+Base commands are independent of arm enable, deadman, freedrive, and speed
+percentage, matching the real adapter. Send fresh commands at about 10 Hz:
+after `command_timeout_sec` without input, the base stops and holds its pose
+until fresh input arrives. A zero joystick command stops it immediately.
+
+The mock does **not** publish or subscribe to `/robot/pad_teleop/cmd_vel`; it
+consumes the HMI command through WebSocket or `/centauro/hmi/command`. The
+`sim_base` frame is separate from the arm model, so it does not move the existing
+arm or change its TF tree.
+
+For example, start the mock backend, then inspect its TF:
+
+```bash
+ros2 run centauro_hmi_backend hmi_backend --ros-args -p robot.type:=mock
+ros2 run tf2_ros tf2_echo base_link sim_base
+```
+
+From another terminal, publish the same HMI payload at 10 Hz (stop with Ctrl+C):
+
+```bash
+ros2 topic pub -r 10 /centauro/hmi/command std_msgs/msg/String \
+  '{data: "{\"type\":\"command\",\"payload\":{\"name\":\"base.joystick\",\"twist\":{\"linear\":[0.5,-0.25,0.0],\"angular\":[0.0,0.0,0.4]}}}"}'
+```
+
 ## Code map
 
 | Module | Responsibility |
@@ -254,6 +291,7 @@ and generates interpolated trajectories with the states `planning` →
 | `transport.py` | WebSocket server: connections, broadcast, and unicast delivery. |
 | `protocol.py` | Message envelope construction and encoding. |
 | `robot.py` | `create_robot()` factory that selects the implementation based on `robot.type`. |
+| `base_motion.py` | Shared planar joystick validation and velocity scaling for mock and real adapters. |
 | `robots/mock_robot.py` | Simulated robot: state, commands, operations, and events. |
 | `robots/real_robot.py` | Adapter for the `robotnik_servo` teleoperation node. |
 | `wait_for_teleoperation.py` | Launch helper that waits for the teleoperation node's parameter service. |

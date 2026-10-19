@@ -1,6 +1,105 @@
+import math
+
 import pytest
 
 from centauro_hmi_backend.robots.mock_robot import MockRobot, tool_position
+
+
+def base_joystick(x=0.0, y=0.0, yaw=0.0):
+    return {'twist': {'linear': [x, y, 0.0], 'angular': [0.0, 0.0, yaw]}}
+
+
+def test_base_translates_without_arm_authorization_or_speed_scaling():
+    sim = MockRobot(speed_percentage=1.0)
+    joints = list(sim.joints)
+
+    assert sim.command('base.joystick', base_joystick(0.5, -0.25))['accepted']
+    sim.tick_base(0.2)
+
+    assert sim.base_pose == pytest.approx([0.1, -0.05, 0.0])
+    assert sim.joints == joints
+    assert not sim.enabled and not sim.deadman
+
+
+def test_base_uses_configured_speed_limits():
+    sim = MockRobot(base_max_linear_speed=2.0, base_max_angular_speed=3.0)
+    sim.command('base.joystick', base_joystick(0.5, -0.25, 0.4))
+
+    assert sim._base_velocity == pytest.approx([1.0, -0.5, 1.2])
+
+
+def test_base_translation_is_relative_to_current_heading():
+    sim = MockRobot(base_max_angular_speed=math.pi)
+    sim.command('base.joystick', base_joystick(yaw=1.0))
+    sim.tick_base(0.5)
+    sim.command('base.joystick', base_joystick(1.0, 0.5))
+    sim.tick_base(0.2)
+
+    assert sim.base_pose == pytest.approx([-0.1, 0.2, math.pi / 2.0])
+
+
+def test_base_integrates_simultaneous_translation_and_rotation():
+    sim = MockRobot(base_max_angular_speed=math.pi)
+    sim.command('base.joystick', base_joystick(1.0, yaw=1.0))
+    sim.tick_base(0.5)
+
+    assert sim.base_pose == pytest.approx([1.0 / math.pi, 1.0 / math.pi, math.pi / 2.0])
+
+
+def test_base_watchdog_stops_and_fresh_input_resumes(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr('centauro_hmi_backend.robots.mock_robot.time.monotonic', lambda: now[0])
+    sim = MockRobot(command_timeout_sec=0.5)
+    sim.command('base.joystick', base_joystick(1.0, -0.5, 0.4))
+    sim.tick_base(0.1)
+    pose = list(sim.base_pose)
+    now[0] += 0.6
+    sim.tick_base(0.1)
+    sim.tick_base(0.1)
+
+    assert sim.base_pose == pose
+    assert sim._base_velocity == [0.0, 0.0, 0.0]
+    sim.command('base.joystick', base_joystick(1.0))
+    sim.tick_base(0.1)
+    assert sim.base_pose != pose
+
+
+def test_zero_base_command_stops_immediately():
+    sim = MockRobot()
+    sim.command('base.joystick', base_joystick(1.0))
+    sim.tick_base(0.1)
+    sim.command('base.joystick', base_joystick())
+    sim.tick_base(0.1)
+
+    assert sim.base_pose == [0.1, 0.0, 0.0]
+
+
+@pytest.mark.parametrize('payload', [
+    {},
+    {'twist': None},
+    {'twist': {'linear': [0.0, 0.0], 'angular': [0.0] * 3}},
+    {'twist': {'linear': [0.0] * 3, 'angular': 'invalid'}},
+    base_joystick(1.1),
+    base_joystick(y=-1.1),
+    base_joystick(yaw=float('nan')),
+    base_joystick(float('inf')),
+    base_joystick('not-a-number'),
+    base_joystick(None),
+    {'twist': {'linear': [0.0, 0.0, 0.1], 'angular': [0.0] * 3}},
+    {'twist': {'linear': [0.0] * 3, 'angular': [0.1, 0.0, 0.0]}},
+    {'twist': {'linear': [0.0] * 3, 'angular': [0.0, 0.1, 0.0]}},
+])
+def test_invalid_base_command_does_not_replace_velocity_or_refresh_watchdog(payload):
+    sim = MockRobot()
+    sim.command('base.joystick', base_joystick(0.5))
+    last_command = sim._last_base_command
+
+    result = sim.command('base.joystick', payload)
+
+    assert result['accepted'] is False
+    assert result['error']['code'] == 'invalid_base_joystick'
+    assert sim._base_velocity == [0.5, 0.0, 0.0]
+    assert sim._last_base_command == last_command
 
 
 def test_tool_position_matches_urdf_joint_chain():

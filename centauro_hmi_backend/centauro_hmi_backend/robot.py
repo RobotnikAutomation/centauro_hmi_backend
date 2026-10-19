@@ -9,7 +9,9 @@ def create_robot(robot_type, speed_percentage, command_timeout_sec, node=None,
                  base_max_angular_speed=1.5):
     """Create the configured robot adapter."""
     if robot_type == 'mock':
-        return MockRobot(speed_percentage, command_timeout_sec)
+        return MockRobot(
+            speed_percentage, command_timeout_sec, base_max_linear_speed, base_max_angular_speed
+        )
     if robot_type == 'real':
         if node is None:
             raise RuntimeError('El adaptador real requiere el nodo ROS del backend')

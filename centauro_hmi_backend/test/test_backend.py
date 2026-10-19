@@ -1,6 +1,12 @@
 import asyncio
 import json
+import math
 import threading
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+from rclpy.time import Time
 
 from centauro_hmi_backend.node import HmiBackend
 from centauro_hmi_backend.robots.mock_robot import MockRobot
@@ -104,6 +110,83 @@ def test_periodic_command_does_not_return_ack():
 
     assert websocket.messages == []
     assert backend.robot.deadman
+
+
+def test_mock_base_joystick_uses_periodic_websocket_interface():
+    backend = make_backend()
+    websocket = FakeWebSocket()
+
+    send(backend, websocket, {
+        'type': 'command',
+        'payload': {
+            'name': 'base.joystick',
+            'twist': {'linear': [0.5, -0.25, 0.0], 'angular': [0.0, 0.0, 0.4]},
+        },
+    })
+
+    assert websocket.messages == []
+    assert backend.robot._base_velocity == pytest.approx([0.5, -0.25, 0.6])
+
+
+def test_invalid_mock_base_joystick_returns_protocol_error():
+    backend = make_backend()
+    websocket = FakeWebSocket()
+
+    send(backend, websocket, {
+        'type': 'command',
+        'payload': {'name': 'base.joystick', 'twist': {'linear': [2, 0, 0], 'angular': [0, 0, 0]}},
+    })
+
+    assert json.loads(websocket.messages[0])['payload']['code'] == 'invalid_base_joystick'
+    assert backend.inbound_stats.take_interval()['errors'] == 1
+
+
+def test_sim_base_tf_uses_elapsed_time_and_keeps_publishing_when_stopped():
+    backend = make_backend()
+    now = Time(seconds=10.0)
+    backend.get_clock = lambda: SimpleNamespace(now=lambda: now)
+    backend._last_sim_base_update = Time(seconds=9.8)
+    backend._sim_base_broadcaster = Mock()
+    backend.robot.command('base.joystick', {
+        'twist': {'linear': [0.5, -0.25, 0.0], 'angular': [0.0, 0.0, 0.0]},
+    })
+
+    backend.publish_sim_base()
+
+    transform = backend._sim_base_broadcaster.sendTransform.call_args.args[0]
+    assert transform.header.stamp == now.to_msg()
+    assert transform.header.frame_id == 'base_link'
+    assert transform.child_frame_id == 'sim_base'
+    assert transform.transform.translation.x == pytest.approx(0.1)
+    assert transform.transform.translation.y == pytest.approx(-0.05)
+    assert transform.transform.translation.z == 0.0
+    assert transform.transform.rotation.w == 1.0
+
+    backend.robot._last_base_command -= 1.0
+    now = Time(seconds=10.2)
+    backend.publish_sim_base()
+
+    assert backend._sim_base_broadcaster.sendTransform.call_count == 2
+    stopped = backend._sim_base_broadcaster.sendTransform.call_args.args[0]
+    assert stopped.header.stamp == now.to_msg()
+    assert stopped.transform == transform.transform
+
+
+def test_sim_base_tf_encodes_yaw_as_unit_quaternion():
+    backend = make_backend()
+    now = Time(seconds=10.0)
+    backend.get_clock = lambda: SimpleNamespace(now=lambda: now)
+    backend._last_sim_base_update = now
+    backend._sim_base_broadcaster = Mock()
+    backend.robot.base_pose = [1.0, 2.0, math.pi / 2.0]
+
+    backend.publish_sim_base()
+
+    transform = backend._sim_base_broadcaster.sendTransform.call_args.args[0]
+    rotation = transform.transform.rotation
+    assert [rotation.x, rotation.y, rotation.z, rotation.w] == pytest.approx(
+        [0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5)]
+    )
 
 
 def test_command_without_name_is_rejected_and_counted_as_error():

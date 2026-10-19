@@ -1,6 +1,7 @@
 import asyncio
 from concurrent.futures import TimeoutError as FutureTimeoutError
 import json
+import math
 import os
 import threading
 from ament_index_python.packages import get_package_share_directory
@@ -10,7 +11,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, TransformStamped
+from tf2_ros import TransformBroadcaster
 
 from .protocol import encode, message, test_image_data
 from .robots.mock_robot import tool_position
@@ -71,11 +73,9 @@ class HmiBackend(Node):
         self.declare_parameter('ik.base_frame', 'robot_arm_base_link')
         self.declare_parameter('ik.namespace', 'robot')
         robot_type = str(self.get_parameter('robot.type').value)
-        base_max_linear_speed, base_max_angular_speed = (1.0, 1.5)
-        if robot_type == 'real':
-            base_max_linear_speed, base_max_angular_speed = load_pad_speed_limits(
-                self.get_parameter('robot.pad_model').value
-            )
+        base_max_linear_speed, base_max_angular_speed = load_pad_speed_limits(
+            self.get_parameter('robot.pad_model').value
+        )
         self.robot = create_robot(
             robot_type,
             float(self.get_parameter('initial_speed_percentage').value),
@@ -138,11 +138,15 @@ class HmiBackend(Node):
         threading.Thread(target=self._run_loop, daemon=True).start()
         hz = float(self.get_parameter('telemetry_hz').value)
         self.create_timer(1.0 / hz, self.tick)
+        base_cmd_vel_hz = float(self.get_parameter('base_cmd_vel_hz').value)
+        if not math.isfinite(base_cmd_vel_hz) or base_cmd_vel_hz <= 0.0:
+            raise ValueError('base_cmd_vel_hz must be finite and greater than zero')
         if getattr(self.robot, 'is_real', False):
-            base_cmd_vel_hz = float(self.get_parameter('base_cmd_vel_hz').value)
-            if base_cmd_vel_hz <= 0.0:
-                raise ValueError('base_cmd_vel_hz must be greater than zero')
             self.create_timer(1.0 / base_cmd_vel_hz, self.robot.publish_base_velocity)
+        else:
+            self._sim_base_broadcaster = TransformBroadcaster(self)
+            self._last_sim_base_update = self.get_clock().now()
+            self.create_timer(1.0 / base_cmd_vel_hz, self.publish_sim_base)
         stats_period = float(self.get_parameter('log_stats_period_sec').value)
         if stats_period > 0.0:
             self.create_timer(stats_period, self.log_inbound_stats)
@@ -298,6 +302,23 @@ class HmiBackend(Node):
                 for name, payload in sorted(stats['last_by_command'].items())
             )
             self.get_logger().info(f'Últimos mensajes RX del intervalo: {samples}')
+
+    def publish_sim_base(self):
+        now = self.get_clock().now()
+        dt = max(0.0, (now - self._last_sim_base_update).nanoseconds / 1e9)
+        self._last_sim_base_update = now
+        with self.lock:
+            self.robot.tick_base(dt)
+            x, y, yaw = self.robot.base_pose
+        transform = TransformStamped()
+        transform.header.stamp = now.to_msg()
+        transform.header.frame_id = 'base_link'
+        transform.child_frame_id = 'sim_base'
+        transform.transform.translation.x = x
+        transform.transform.translation.y = y
+        transform.transform.rotation.z = math.sin(yaw / 2.0)
+        transform.transform.rotation.w = math.cos(yaw / 2.0)
+        self._sim_base_broadcaster.sendTransform(transform)
 
     def tick(self):
         with self.lock:

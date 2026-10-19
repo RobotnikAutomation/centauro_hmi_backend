@@ -9,6 +9,8 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float32, Int32
 from std_srvs.srv import Trigger
 
+from ..base_motion import parse_base_joystick
+
 
 JOINT_NAMES = ["shoulder_pan", "shoulder_lift", "elbow", "wrist_1", "wrist_2", "wrist_3"]
 ROBOT_JOINT_NAMES = [
@@ -303,32 +305,14 @@ class RobotnikTeleoperationRobot:
         return {"accepted": True}
 
     def _base_joystick(self, payload):
-        twist = payload.get("twist", {})
-        if not isinstance(twist, dict):
-            return self._rejected("invalid_base_joystick", "twist must be an object")
-        linear, angular = twist.get("linear"), twist.get("angular")
-        if not isinstance(linear, (list, tuple)) or len(linear) != 3:
-            return self._rejected("invalid_base_joystick", "twist.linear must contain three values")
-        if not isinstance(angular, (list, tuple)) or len(angular) != 3:
-            return self._rejected("invalid_base_joystick", "twist.angular must contain three values")
         try:
-            axes = [float(value) for value in (*linear, *angular)]
+            velocity = parse_base_joystick(
+                payload, self.base_max_linear_speed, self.base_max_angular_speed
+            )
         except (TypeError, ValueError) as exc:
             return self._rejected("invalid_base_joystick", str(exc))
-        if not all(math.isfinite(value) and -1.0 <= value <= 1.0 for value in axes):
-            return self._rejected(
-                "invalid_base_joystick", "joystick axes must be finite values between -1 and 1"
-            )
-        if axes[2] != 0.0 or axes[3] != 0.0 or axes[4] != 0.0:
-            return self._rejected(
-                "invalid_base_joystick", "base joystick supports linear x/y and angular z only"
-            )
         with self._lock:
-            self._base_velocity = [
-                axes[0] * self.base_max_linear_speed,
-                axes[1] * self.base_max_linear_speed,
-                axes[5] * self.base_max_angular_speed,
-            ]
+            self._base_velocity = velocity
             self._last_base_command = time.monotonic()
         return {"accepted": True}
 
