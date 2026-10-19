@@ -12,7 +12,8 @@
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>robot_bringup</exec_depend>
   <exec_depend>robotnik_servo</exec_depend>
-  <exec_depend>cartesian_kinematics_for_hmi_teleoperation</exec_depend>
+  <depend>cartesian_kinematics_for_hmi_teleoperation</depend>
+  <exec_depend>tf2_ros_py</exec_depend>
   <exec_depend>launch</exec_depend>
   <depend>sensor_msgs</depend>
   <depend>robotnik_battery_msgs</depend>

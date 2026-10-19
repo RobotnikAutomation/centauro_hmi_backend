@@ -20,11 +20,13 @@ from .transport import WebSocketTransport
 from .robot_model import RobotModelProvider
 from .real_status import RealStatusBridge
 from .pad_config import load_pad_speed_limits
+from .ik_bridge import CartesianIkBridge
 
 PERIODIC_COMMANDS = {
     'teleoperation.deadman',
     'arm.joint_jog',
     'arm.cartesian_jog',
+    'arm.cartesian_target',
     'teleoperation.freedrive',
     'base.joystick',
 }
@@ -66,6 +68,7 @@ class HmiBackend(Node):
         self.declare_parameter('robot_model_chunk_size', 64 * 1024)
         self.declare_parameter('ik.target_frame', 'hmi_tcp_target')
         self.declare_parameter('ik.tcp_frame', 'robot_arm_tool0')
+        self.declare_parameter('ik.base_frame', 'robot_arm_base_link')
         self.declare_parameter('ik.namespace', 'robot')
         robot_type = str(self.get_parameter('robot.type').value)
         base_max_linear_speed, base_max_angular_speed = (1.0, 1.5)
@@ -113,6 +116,15 @@ class HmiBackend(Node):
         self._last_teleoperation_status = None
         self._last_real_robot_status = None
         self.loop = asyncio.new_event_loop()
+        ik_namespace = str(self.get_parameter('ik.namespace').value).strip('/')
+        self.ik_bridge = CartesianIkBridge(
+            self,
+            self._publish_event,
+            str(self.get_parameter('ik.target_frame').value),
+            str(self.get_parameter('ik.base_frame').value),
+            f'/{ik_namespace}/follow_tcp_target' if ik_namespace else '/follow_tcp_target',
+            float(self.get_parameter('command_timeout_sec').value),
+        )
         self._publisher_task = None
         self._shutting_down = False
         self.transport = WebSocketTransport(
@@ -223,6 +235,15 @@ class HmiBackend(Node):
                 self.robot_model.bundle()
                 command_result = {'accepted': True, 'result': manifest}
                 model_chunks = self.robot_model.chunks()
+            elif name == 'arm.cartesian_target':
+                ik_bridge = getattr(self, 'ik_bridge', None)
+                if ik_bridge is None:
+                    command_result = {
+                        'accepted': False,
+                        'error': {'code': 'ik_unavailable', 'message': 'IK bridge is not configured'},
+                    }
+                else:
+                    command_result = ik_bridge.command(payload)
             else:
                 with self.lock:
                     command_result = self.robot.command(name, payload)
@@ -283,6 +304,7 @@ class HmiBackend(Node):
             self.robot.tick(1.0 / float(self.get_parameter('telemetry_hz').value))
             snapshot = self.robot.snapshot()
             events = self.robot.take_events()
+        self.ik_bridge.tick()
         if snapshot.get('feedback_available', True):
             joint = JointState()
             joint.header.stamp = self.get_clock().now().to_msg()

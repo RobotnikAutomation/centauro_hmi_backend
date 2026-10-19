@@ -67,6 +67,7 @@ backend only responds with `error` if it cannot process them.
 | H2B-004 | `arm.cartesian_jog` | `frame_id: string`, `twist: {"linear": [x, y, z], "angular": [rx, ry, rz]}` | **10 Hz** while moving. | Requests a Cartesian velocity relative to the specified frame, subject to limits and safety constraints. | After `0.5 s` by default, sets velocities to zero. The session and deadman remain active if deadman messages continue to arrive. |
 | — | `base.joystick` | `twist: {"linear": [x, y, 0], "angular": [0, 0, yaw]}` | Periodically while controlling the base; interval must remain below `command_timeout_sec`. | Scales normalized planar axes and publishes `geometry_msgs/Twist` to `/robot/pad_teleop/cmd_vel` at 100 Hz by default. Real mode only. | Publishes zero velocity after timeout until fresh joystick input arrives. |
 | H2B-007 | `teleoperation.freedrive` | `active: boolean` | **10 Hz** while `active` is `true`; the interval must always be less than `0.5 s`. | Keeps freedrive active while the periodic command continues to arrive and `active` is `true`. | After `0.5 s` by default, disables freedrive and emits `teleoperation_status` with `freedrive: false` and `reason: "freedrive_timeout"`. |
+| — | `arm.cartesian_target` | `pose: {"position": [x, y, z], "orientation": [qx, qy, qz, qw]}`, optional `frame_id: string` (default `ik.base_frame`) | Periodically while following; interval must remain below `command_timeout_sec`. | Broadcasts the pose as TF `ik.target_frame` and keeps a continuous goal on the `cartesian_kinematics_for_hmi_teleoperation` IK action server. IK solutions are streamed back as `ik_solution`. Does not move the robot. | After `0.5 s` by default, cancels the IK goal; a final `ik_solution` is emitted. |
 
 Joint jog example:
 
@@ -119,6 +120,7 @@ Messages emitted by the backend use the same JSON envelope
 | B2H-009 | `operation_status` | During an operation and on state changes. | `operation_id`, `status`, normalized `progress`, and `result` or `error`. |
 | B2H-007 | `planned_trajectory` | After planning a movement that requires confirmation. | `operation_id`, `trajectory_id`, trajectory, validation result, and final pose. |
 | — | `robot_model_chunk` | After `robot.model.download`. | `model_id`, chunk number, total number of chunks, and Base64 ZIP data. |
+| — | `ik_solution` | For each IK solution while `arm.cartesian_target` is active, plus one final message when the goal ends. | `final: boolean`, `joint_names` (ROS joint names), `positions`; non-final messages add `position_error` [m], `orientation_error` [rad], `joint_delta_norm`; final messages add `success` and `message`. |
 | B2H-004 | `tool_camera` | Mock mode periodically sends a test PNG; real mode sends each newly received configured image frame once. | `stream_id`, per-stream `sequence`, `topic`, `encoding: "base64"`, `format: "ros_image"`, raw pixel `data`, `image_encoding`, `width`, `height`, `step`, `is_bigendian`, and source `timestamp`. |
 
 In real mode, `telemetry.payload.teleoperation.mode` and
@@ -396,6 +398,20 @@ Request:
 
 Immediate response: none. Jog messages must be sent periodically; if the
 timeout expires, the backend sets velocities to zero and reflects this in `telemetry`.
+
+#### `arm.cartesian_target`
+
+Request:
+
+```json
+{"type":"command","request_id":"ik-001","timestamp":1730000001.0,"payload":{"name":"arm.cartesian_target","frame_id":"robot_arm_base_link","pose":{"position":[0.4,0.0,0.5],"orientation":[0.0,1.0,0.0,0.0]}}}
+```
+
+Immediate response: none. The backend streams `ik_solution` messages:
+
+```json
+{"type":"ik_solution","timestamp":1730000001.02,"request_id":null,"payload":{"final":false,"joint_names":["robot_arm_shoulder_pan_joint","robot_arm_shoulder_lift_joint","robot_arm_elbow_joint","robot_arm_wrist_1_joint","robot_arm_wrist_2_joint","robot_arm_wrist_3_joint"],"positions":[0.0,-1.2,1.4,-1.8,-1.57,0.0],"position_error":0.0001,"orientation_error":0.0002,"joint_delta_norm":0.003}}
+```
 
 #### `teleoperation.freedrive`
 
