@@ -104,8 +104,10 @@ move the mock for a set duration, use `ws_jog_for_seconds_demo` or
 | `planned_trajectory` | After planning a pose or a joint configuration. |
 | `robot_model_chunk` | After `robot.model.download`, one chunk per message. |
 
-The `tool_camera` image is a base64-encoded test PNG, allowing the
-client to validate the video stream without hardware.
+In mock WebSocket mode, `tool_camera` forwards frames from a looping camera
+rosbag as Base64-encoded **raw ROS image pixels**, not PNG/JPEG. Mock WebRTC
+mode sends video through the separate WebRTC server and emits no `tool_camera`
+messages. See [Mock camera playback](#mock-camera-playback).
 
 ### Robot model
 
@@ -113,6 +115,134 @@ client to validate the video stream without hardware.
 model as a chunked ZIP archive. The ZIP contains `robot.urdf` and the
 `meshes/` directory with relative paths; the manifest includes the size, SHA-256, and
 `model_id`, so the HMI can cache it.
+
+## Mock camera playback
+
+Use **`ros2 launch`** to start the mock with camera playback. The launch reads
+the backend ROS parameters from [config/backend.yaml](config/backend.yaml).
+Its `robot_type`, `mock_camera_transport`, and `mock_rosbag_path` arguments
+override `robot.type`, `mock.camera_transport`, and `mock.rosbag_path`,
+respectively, and pass the same values to the backend node. The supplied YAML
+still selects `robot.type: real`; explicitly select `mock` for these examples.
+
+### WebSocket video
+
+```bash
+ros2 launch centauro_hmi_backend backend.launch.py \
+  robot_type:=mock mock_camera_transport:=websocket \
+  mock_rosbag_path:=/home/robot/teleop_ws/src/front_camera_10s
+```
+
+This starts `ros2 bag play --loop`, restricted to
+`/robot/front_rgbd_camera/color/image_raw` (`sensor_msgs/msg/Image`).
+The backend subscribes to that topic and publishes `tool_camera` JSON messages
+on the existing `ws://127.0.0.1:8765` connection. **No WebRTC node is started.**
+Mock telemetry, constraints, robot status, and commands continue as before.
+
+Each camera payload contains `stream_id: "front_camera"`, `topic`,
+`encoding: "base64"`, `format: "ros_image"`, `data`, `image_encoding`,
+`width`, `height`, `step`, `is_bigendian`, the recorded header `timestamp`,
+and a monotonically increasing `sequence`. Decode `data` as raw pixels using
+the supplied ROS encoding and row stride; do not feed it to a PNG decoder.
+The [WebSocket contract](docs/WEBSOCKET_PROTOCOL.md) includes an example.
+
+Only the newest received frame is sent per `telemetry_hz` tick (20 Hz by
+default); intermediate frames are dropped rather than queued. A frame is
+never resent on subsequent ticks without a new ROS image. If the topic stops,
+camera messages stop; there is no test-PNG fallback. The supplied recording
+contains 594 frames over about 9.94 seconds (roughly 60 Hz).
+
+### WebRTC video
+
+Build/source `webrtc_video_stream` and `webrtc_video_stream_msgs` from the
+sibling [webrtc_video_stream repository](../../webrtc_video_stream/README.md),
+including its host Python/media dependencies:
+
+```bash
+cd /home/robot/teleop_ws
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install --packages-select \
+  webrtc_video_stream_msgs webrtc_video_stream centauro_hmi_backend
+source install/setup.bash
+ros2 launch centauro_hmi_backend backend.launch.py \
+  robot_type:=mock mock_camera_transport:=webrtc \
+  mock_rosbag_path:=/home/robot/teleop_ws/src/front_camera_10s
+```
+
+The same looped bag player starts, plus
+`webrtc_video_stream/webrtc_video_stream_node.py`. The backend does **not**
+subscribe to mock images or emit `tool_camera` messages in this mode. Its
+WebSocket connection remains available for commands and telemetry.
+
+[config/mock_camera_webrtc.yaml](config/mock_camera_webrtc.yaml) registers
+the single topic source `front_camera`. The WebRTC server listens on
+`https://<backend-host>:8081`, with VP8 video and audio disabled:
+
+- `GET /streams` lists `front_camera`.
+- `POST /offer` handles WebRTC SDP negotiation; select the `front_camera`
+  stream using the WebRTC package's client protocol.
+- This is WebRTC video, not an MJPEG/HTTP video URL. Follow the sibling
+  package's client documentation for receiving the media track.
+- The existing WebRTC package uses its installed development TLS certificate
+  and key. Trust that certificate for local testing; use deployment-appropriate
+  certificates and network controls before exposing this server.
+- **A running STUN/TURN service is also required by the existing WebRTC
+  package.** Its [ICE configuration](../../webrtc_video_stream/webrtc_video_stream/src/webrtc_video_stream/server/config.py)
+  points to `127.0.0.1:3478`. Start the sibling package's documented
+  [Coturn setup](../../webrtc_video_stream/README.md#testing-with-docker-example-setup),
+  or an equivalent host Coturn service with matching authentication, before
+  connecting a video client. The backend launch starts neither Coturn nor its
+  Docker stack. Without this service, `/streams` can work while `POST /offer`
+  stalls or fails and no video reaches the client. For remote deployments,
+  configure reachable ICE addresses in that package rather than loopback
+  addresses. No changes are made to the sibling package by this integration.
+- The existing topic-stream implementation converts images to BGR8, resizes
+  them to 800x600, and sends a WebRTC video track (normally 30 FPS), independently
+  of the backend's `telemetry_hz`.
+
+### Configuration and lifecycle
+
+Both launch files support the same overrides; for visualization, replace
+`backend.launch.py` with `complete.launch.py` (optionally `rviz:=false`).
+To make the selection persistent without command-line overrides, edit
+[config/backend.yaml](config/backend.yaml):
+
+```yaml
+centauro_hmi_backend:
+  ros__parameters:
+    robot.type: mock
+    mock.camera_transport: webrtc  # or websocket
+    mock.rosbag_path: /home/robot/teleop_ws/src/front_camera_10s
+```
+
+These are startup settings, not a live transport switch: restart the launch
+after changing them. `ros2 param set` cannot change the two read-only mock
+camera parameters. With a non-symlink install, rebuild after editing the source
+configuration.
+
+The launch rejects a missing bag/metadata file or metadata without a nonempty
+Image topic at the required camera topic. Playback errors appear in the launch
+output. Exiting either camera process or the mock backend shuts down the mock
+launch instead of leaving a backend running without its selected video source.
+Ctrl+C stops the player, optional WebRTC node, and backend together.
+
+Playback uses the recorded timing at 1x speed and loops at end-of-file.
+Recorded image header timestamps jump back on every loop; WebSocket sequence
+numbers keep increasing until the backend restarts. No `/clock` is published
+and `use_sim_time` is not enabled. Only the camera topic is replayed, even if
+another bag contains control/joint topics. A small read-ahead queue (10 messages)
+limits the memory used for these uncompressed camera frames.
+
+**Do not run mock playback in a ROS domain connected to a real robot camera**:
+it publishes on the real camera's topic name. Use a separate `ROS_DOMAIN_ID`
+for development, set consistently for the launch and any ROS inspection tools.
+
+Running `ros2 run centauro_hmi_backend hmi_backend` alone does not start sibling
+processes: in mock WebSocket mode it can forward an externally published camera
+topic, but it neither plays the bag nor starts WebRTC. Use the launch files for
+automatic playback/transport startup. In `robot.type: real`, the launch starts
+neither the mock player nor the WebRTC node; existing real-image subscriptions
+and robot status forwarding are unchanged.
 
 ## Configuration
 
@@ -122,6 +252,8 @@ loaded by the launch files.
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `robot.type` | `mock` | Robot adapter to use: `mock` or `real`. Real mode requires `robotnik_servo` and its robot interfaces to be running. |
+| `mock.camera_transport` | `websocket` | Mock camera delivery: `websocket` or `webrtc`. Startup-only; restart the launch to change it. Does not alter real-mode camera delivery. |
+| `mock.rosbag_path` | `/home/robot/teleop_ws/src/front_camera_10s` | Mock camera rosbag directory containing `metadata.yaml` and its data files. Startup-only; the bag is not copied into the package. |
 | `websocket_host` | `127.0.0.1` | Network interface on which the WebSocket server listens. |
 | `websocket_port` | `8765` | WebSocket server port. |
 | `websocket_ping_timeout_sec` | `1800.0` | Time allowed for a WebSocket client to reply to a keepalive ping before the connection is closed (30 minutes). |

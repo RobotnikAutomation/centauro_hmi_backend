@@ -98,11 +98,17 @@ Use two terminals, and source the workspace in both.
 **Terminal A: backend and visualization**
 
 ```bash
-ros2 launch centauro_hmi_backend complete.launch.py
+ros2 launch centauro_hmi_backend complete.launch.py robot_type:=mock
 ```
 
 RViz2 should open with a six-joint arm. The console should print a statistics
-summary every five seconds.
+summary every five seconds. Mock camera video defaults to WebSocket delivery
+from the looping rosbag at `/home/robot/teleop_ws/src/front_camera_10s`.
+Override `mock_rosbag_path:=/path/to/bag` for another recording, or add
+`mock_camera_transport:=webrtc` to start the sibling WebRTC server instead of
+sending images over WebSocket. See
+[Mock camera playback](centauro_hmi_backend/README.md#mock-camera-playback)
+for dependencies, payload format, configuration, and lifecycle details.
 
 **Terminal B: test client**
 

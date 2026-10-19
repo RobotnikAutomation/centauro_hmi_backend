@@ -8,13 +8,15 @@ from ament_index_python.packages import get_package_share_directory
 
 import rclpy
 from rclpy.node import Node
+from rcl_interfaces.msg import ParameterDescriptor
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point, TransformStamped
 from tf2_ros import TransformBroadcaster
 
-from .protocol import encode, message, test_image_data
+from .protocol import encode, message
+from .camera import DEFAULT_MOCK_ROSBAG_PATH, FRONT_CAMERA_TOPIC, ImageStreamBridge
 from .robots.mock_robot import tool_position
 from .robot import create_robot
 from .stats import InboundStats, compact_payload
@@ -38,6 +40,14 @@ class HmiBackend(Node):
     def __init__(self):
         super().__init__('centauro_hmi_backend')
         self.declare_parameter('robot.type', 'mock')
+        self.declare_parameter(
+            'mock.camera_transport', 'websocket',
+            ParameterDescriptor(read_only=True),
+        )
+        self.declare_parameter(
+            'mock.rosbag_path', DEFAULT_MOCK_ROSBAG_PATH,
+            ParameterDescriptor(read_only=True),
+        )
         self.declare_parameter('websocket_host', '127.0.0.1')
         self.declare_parameter('websocket_port', 8765)
         self.declare_parameter('websocket_ping_timeout_sec', 1800.0)
@@ -73,6 +83,14 @@ class HmiBackend(Node):
         self.declare_parameter('ik.base_frame', 'robot_arm_base_link')
         self.declare_parameter('ik.namespace', 'robot')
         robot_type = str(self.get_parameter('robot.type').value)
+        camera_transport = str(self.get_parameter('mock.camera_transport').value)
+        if camera_transport not in ('websocket', 'webrtc'):
+            raise ValueError('mock.camera_transport must be websocket or webrtc')
+        self.mock_camera = None
+        if robot_type == 'mock' and camera_transport == 'websocket':
+            self.mock_camera = ImageStreamBridge(
+                self, [f'front_camera={FRONT_CAMERA_TOPIC}']
+            )
         base_max_linear_speed, base_max_angular_speed = load_pad_speed_limits(
             self.get_parameter('robot.pad_model').value
         )
@@ -210,7 +228,9 @@ class HmiBackend(Node):
                 }
                 await self.transport.publish(encode(message('constraints', constraints)))
                 await self.transport.publish(encode(message('robot_status', {'base': 'available', 'arm': 'available', 'tool': 'available', 'battery_percentage': 87.0, 'alarms': []})))
-                await self.transport.publish(encode(message('tool_camera', {'encoding': 'base64', 'format': 'png', 'data': test_image_data()})))
+                if self.mock_camera is not None:
+                    for camera_payload in self.mock_camera.snapshot():
+                        await self.transport.publish(encode(message('tool_camera', camera_payload)))
 
     async def ws_command(self, websocket, raw, source='websocket'):
         name = None

@@ -125,7 +125,7 @@ Messages emitted by the backend use the same JSON envelope
 | B2H-007 | `planned_trajectory` | After planning a movement that requires confirmation. | `operation_id`, `trajectory_id`, trajectory, validation result, and final pose. |
 | — | `robot_model_chunk` | After `robot.model.download`. | `model_id`, chunk number, total number of chunks, and Base64 ZIP data. |
 | — | `ik_solution` | For each IK solution while `arm.cartesian_target` is active, plus one final message when the goal ends. | `final: boolean`, `joint_names` (ROS joint names), `positions`; non-final messages add `position_error` [m], `orientation_error` [rad], `joint_delta_norm`; final messages add `success` and `message`. |
-| B2H-004 | `tool_camera` | Mock mode periodically sends a test PNG; real mode sends each newly received configured image frame once. | `stream_id`, per-stream `sequence`, `topic`, `encoding: "base64"`, `format: "ros_image"`, raw pixel `data`, `image_encoding`, `width`, `height`, `step`, `is_bigendian`, and source `timestamp`. |
+| B2H-004 | `tool_camera` | Mock WebSocket and real modes send the newest received frame per stream, at most once per telemetry tick. Mock WebRTC mode emits no camera messages on this socket. | `stream_id`, per-stream `sequence`, `topic`, `encoding: "base64"`, `format: "ros_image"`, raw pixel `data`, `image_encoding`, `width`, `height`, `step`, `is_bigendian`, and source `timestamp`. |
 
 In real mode, `telemetry.payload.teleoperation.mode` and
 `teleoperation_status.payload.mode` are updated from
@@ -487,11 +487,20 @@ Planned trajectory awaiting confirmation:
 {"type":"planned_trajectory","timestamp":1730000001.1,"payload":{"operation_id":"op-001","trajectory_id":"traj-op-001","trajectory":{"joint_names":["shoulder_pan","shoulder_lift","elbow","wrist_1","wrist_2","wrist_3"],"points":[{"positions":[0.0,-1.57,0.0,-1.57,0.0,0.0]},{"positions":[0.0,-1.57,0.0,-1.57,0.0,0.0]}]},"validation":{"valid":true},"final_pose":{"frame_id":"base_link","position":[0.4,0.0,0.5],"orientation":[0.0,1.0,0.0,0.0]}}}
 ```
 
-Base64-encoded tool camera image:
+Base64-encoded raw ROS camera image (one RGB8 pixel for illustration):
 
 ```json
-{"type":"tool_camera","timestamp":1730000001.1,"payload":{"encoding":"base64","format":"png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB..."}}
+{"type":"tool_camera","timestamp":1730000001.1,"payload":{"stream_id":"front_camera","sequence":42,"topic":"/robot/front_rgbd_camera/color/image_raw","encoding":"base64","format":"ros_image","data":"AAH/","image_encoding":"rgb8","width":1,"height":1,"step":3,"is_bigendian":false,"timestamp":{"sec":1730000001,"nanosec":100000000}}}
 ```
+
+`data` contains raw pixels, not a PNG/JPEG file. Use `image_encoding`, `step`,
+and byte order to render them. Frames received between telemetry ticks are
+replaced by the latest frame; no message is sent without a new image.
+Mock WebSocket mode replaces the old test PNG with this real-image payload.
+Its bag loops at end-of-file: source timestamps reset each loop, while sequence
+numbers continue increasing. In mock WebRTC mode only commands and telemetry
+remain on this socket; receive `front_camera` through the separate WebRTC
+server on HTTPS port 8081. See [Mock camera playback](../README.md#mock-camera-playback).
 
 ## Pending Excel mappings
 

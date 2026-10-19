@@ -68,6 +68,8 @@ def test_parse_image_streams_rejects_duplicate_names():
 def test_image_payload_includes_raw_data_and_stream_metadata():
     bridge = RealStatusBridge.__new__(RealStatusBridge)
     bridge._lock = threading.Lock()
+    bridge._battery = None
+    bridge._status = {}
     bridge._images = {'front': None}
     bridge._image_sequences = {'front': 0}
     bridge._published_image_sequences = {'front': 0}
