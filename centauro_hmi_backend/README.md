@@ -103,6 +103,7 @@ move the mock for a set duration, use `ws_jog_for_seconds_demo` or
 | `operation_status` | While an operation is active. |
 | `planned_trajectory` | After planning a pose or a joint configuration. |
 | `robot_model_chunk` | After `robot.model.download`, one chunk per message. |
+| `robot_description` | Once per WebSocket connection, only in mock mode. |
 
 In mock WebSocket mode, `tool_camera` forwards frames from a looping camera
 rosbag as Base64-encoded **raw ROS image pixels**, not PNG/JPEG. Mock WebRTC
@@ -111,10 +112,33 @@ messages. See [Mock camera playback](#mock-camera-playback).
 
 ### Robot model
 
+In mock mode, including when started directly with `ros2 run`, the backend
+expands `robotnik_description/robots/rbkairos/rbkairos_plus.urdf.xacro`
+with `namespace:=robot` and `prefix:=robot_` (the model's default UR10e arm).
+It publishes the resulting URDF as `std_msgs/msg/String` on
+`/robot/robot_description` with reliable, transient-local, depth-1 QoS, so
+late subscribers receive it. Subscribe with transient-local durability, e.g.:
+
+```bash
+ros2 topic echo /robot/robot_description std_msgs/msg/String \
+  --qos-durability transient_local --once
+```
+
+Each new WebSocket connection receives a `robot_description` message with
+`payload.topic: "/robot/robot_description"` and `payload.data` containing the
+same URDF XML. The topic and message are **not** published in real mode.
+Mock mode requires `robotnik_description`, its model dependencies, and `xacro`
+in the sourced host ROS environment; missing models fail startup explicitly.
+
 `robot.model.get` returns the manifest, and `robot.model.download` sends the
-model as a chunked ZIP archive. The ZIP contains `robot.urdf` and the
+same RB-KAIROS+ model as a chunked ZIP archive. The ZIP contains `robot.urdf` and the
 `meshes/` directory with relative paths; the manifest includes the size, SHA-256, and
-`model_id`, so the HMI can cache it.
+`model_id`, so the HMI can cache it. Referenced assets from `robotnik_description`,
+`robotnik_sensors`, and `ur_description`, including COLLADA textures, are bundled.
+The unbundled description retains its original `package://` asset URIs.
+The existing mock visualization launch remains a separate, simplified arm-only
+debug view on `/robot_description`; it does not publish the RB-KAIROS+ topic
+or simulate the full robot's kinematics.
 
 ## Mock camera playback
 

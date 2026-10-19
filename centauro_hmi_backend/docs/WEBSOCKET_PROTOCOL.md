@@ -149,6 +149,21 @@ fields are absent until their topics have delivered a sample.
 
 ### Robot model
 
+Mock mode sends a `robot_description` message immediately on every connection
+(including reconnects):
+
+```json
+{"type":"robot_description","timestamp":1730000001.0,"payload":{"topic":"/robot/robot_description","data":"<?xml version=\"1.0\"?><robot name=\"rbkairos_plus\">...</robot>"}}
+```
+
+`data` is the expanded RB-KAIROS+ URDF from `robotnik_description`, with
+`namespace:=robot`, `prefix:=robot_`, and the default UR10e arm. It is identical
+to the `std_msgs/msg/String.data` published on `/robot/robot_description`
+(reliable, transient-local, depth 1). This is a static, once-per-connection
+message, not a telemetry stream. Real mode does not publish this topic or
+WebSocket message. The XML uses ROS `package://` asset URIs; use the download
+below for a portable copy with meshes and textures.
+
 `robot.model.get` returns only the model manifest. The HMI can
 compare `model_id` and `sha256` against its cache before requesting a download:
 
@@ -171,7 +186,10 @@ then sends a sequence of `robot_model_chunk` messages over the same
 connection. Each chunk has a zero-based `sequence`, `total`, and Base64-encoded
 `data`. The HMI must concatenate the chunks in order, validate
 the overall SHA-256, and extract the ZIP. The ZIP contains `robot.urdf` and
-`meshes/` with relative paths.
+`meshes/` with relative paths. In mock mode this is the same RB-KAIROS+ model,
+including referenced meshes and COLLADA textures from its dependency packages.
+This model describes the full robot; the existing mock telemetry and motion
+commands remain the simplified six-joint simulation, not full-robot dynamics.
 
 The maximum ZIP size and chunk size are configured using
 `robot_model_max_size_bytes` and `robot_model_chunk_size`, respectively.

@@ -8,6 +8,7 @@ from ament_index_python.packages import get_package_share_directory
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from rcl_interfaces.msg import ParameterDescriptor
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
@@ -21,7 +22,7 @@ from .robots.mock_robot import tool_position
 from .robot import create_robot
 from .stats import InboundStats, compact_payload
 from .transport import WebSocketTransport
-from .robot_model import RobotModelProvider
+from .robot_model import ROBOT_DESCRIPTION_TOPIC, RobotModelProvider, load_mock_robot_description
 from .real_status import RealStatusBridge
 from .pad_config import load_pad_speed_limits
 from .ik_bridge import CartesianIkBridge
@@ -118,11 +119,19 @@ class HmiBackend(Node):
                 },
             )
         self.robot_model = None
+        self.robot_description = None
         if robot_type == 'mock':
+            self.robot_description = load_mock_robot_description()
+            self.robot_description_pub = self.create_publisher(
+                String, ROBOT_DESCRIPTION_TOPIC,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+            )
+            self.robot_description_pub.publish(String(data=self.robot_description))
             self.robot_model = RobotModelProvider(
                 get_package_share_directory('centauro_hmi_backend'),
                 self.get_parameter('robot_model_max_size_bytes').value,
                 self.get_parameter('robot_model_chunk_size').value,
+                robot_description=self.robot_description,
             )
         self.command_pub = self.create_subscription(String, '/centauro/hmi/command', self.ros_command, 10)
         self.joint_pub = self.create_publisher(JointState, '/joint_states', 10)
@@ -195,6 +204,13 @@ class HmiBackend(Node):
             f'Cliente WebSocket conectado: {websocket.remote_address}; '
             f'clientes={len(self.transport.clients)}'
         )
+        if self.robot_description is not None:
+            await self.transport.send_to_client(
+                websocket, encode(message('robot_description', {
+                    'topic': ROBOT_DESCRIPTION_TOPIC,
+                    'data': self.robot_description,
+                }))
+            )
         if self.real_status is not None:
             robot_status, _ = self.real_status.snapshot()
             if robot_status:

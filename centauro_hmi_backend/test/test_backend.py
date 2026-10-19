@@ -16,6 +16,7 @@ from centauro_hmi_backend.stats import InboundStats
 class FakeWebSocket:
     def __init__(self):
         self.messages = []
+        self.remote_address = ('127.0.0.1', 12345)
 
 
 class FakeTransport:
@@ -41,6 +42,7 @@ def make_backend():
     backend.robot = MockRobot()
     backend.transport = FakeTransport()
     backend.robot_model = FakeModelProvider()
+    backend.robot_description = None
     backend.inbound_stats = InboundStats()
     backend.events = []
     backend._publish_event = lambda kind, payload: backend.events.append((kind, payload))
@@ -94,6 +96,24 @@ def test_new_websocket_client_receives_current_real_robot_status():
     response = json.loads(websocket.messages[0])
     assert response['type'] == 'robot_status'
     assert response['payload']['robot_mode']['mode'] == 7
+
+
+def test_new_mock_websocket_client_receives_robot_description():
+    backend = make_backend()
+    websocket = FakeWebSocket()
+    backend.transport.clients = {websocket}
+    backend.get_logger = lambda: Mock()
+    backend.real_status = None
+    backend.robot_description = '<robot name="rbkairos_plus"/>'
+
+    asyncio.run(backend.ws_connected(websocket))
+
+    response = json.loads(websocket.messages[0])
+    assert response['type'] == 'robot_description'
+    assert response['payload'] == {
+        'topic': '/robot/robot_description',
+        'data': backend.robot_description,
+    }
 
 
 def test_periodic_command_does_not_return_ack():
