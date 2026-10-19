@@ -13,6 +13,13 @@ interfaces with packages for teleoperation and joint-state feedback;
 planning and other unsupported capabilities are documented in the backend
 [README](centauro_hmi_backend/README.md).
 
+Mock mode can also loop a recorded LaserScan bag (projected to XYZ) or a native
+PointCloud2 bag over WebSocket. Select one with `mock_point_cloud_source:=scans`
+or `mock_point_cloud_source:=pointcloud`; `none` disables replay by default.
+Both bag paths are configurable. See
+[mock point cloud playback](centauro_hmi_backend/README.md#mock-point-cloud-playback)
+for launch examples and the binary payload format.
+
 ## Architecture
 
 ```mermaid

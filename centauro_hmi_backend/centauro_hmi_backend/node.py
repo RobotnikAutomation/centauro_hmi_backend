@@ -28,6 +28,10 @@ from .pad_config import load_pad_speed_limits
 from .ik_bridge import CartesianIkBridge
 from .tf_frames import TfFramesBridge
 from .tf_observation import TfObservationBridge
+from .point_cloud import (
+    DEFAULT_SCANS_ROSBAG_PATH, DEFAULT_POINTCLOUD_ROSBAG_PATH,
+    create_mock_point_cloud_replay,
+)
 
 PERIODIC_COMMANDS = {
     'teleoperation.deadman',
@@ -49,6 +53,17 @@ class HmiBackend(Node):
         )
         self.declare_parameter(
             'mock.rosbag_path', DEFAULT_MOCK_ROSBAG_PATH,
+            ParameterDescriptor(read_only=True),
+        )
+        self.declare_parameter(
+            'mock.point_cloud_source', 'none', ParameterDescriptor(read_only=True),
+        )
+        self.declare_parameter(
+            'mock.scans_rosbag_path', DEFAULT_SCANS_ROSBAG_PATH,
+            ParameterDescriptor(read_only=True),
+        )
+        self.declare_parameter(
+            'mock.pointcloud_rosbag_path', DEFAULT_POINTCLOUD_ROSBAG_PATH,
             ParameterDescriptor(read_only=True),
         )
         self.declare_parameter('websocket_host', '127.0.0.1')
@@ -87,6 +102,13 @@ class HmiBackend(Node):
         self.declare_parameter('ik.namespace', 'robot')
         self.declare_parameter('tf.action_name', '/observe_transform')
         robot_type = str(self.get_parameter('robot.type').value)
+        self.mock_point_cloud = create_mock_point_cloud_replay(
+            robot_type,
+            str(self.get_parameter('mock.point_cloud_source').value),
+            str(self.get_parameter('mock.scans_rosbag_path').value),
+            str(self.get_parameter('mock.pointcloud_rosbag_path').value),
+        )
+        self._point_cloud_task = None
         camera_transport = str(self.get_parameter('mock.camera_transport').value)
         if camera_transport not in ('websocket', 'webrtc'):
             raise ValueError('mock.camera_transport must be websocket or webrtc')
@@ -196,16 +218,30 @@ class HmiBackend(Node):
             return
         self.get_logger().info(f'WebSocket escuchando en ws://{self.transport.host}:{self.transport.port}')
         self._publisher_task = self.loop.create_task(self.publisher_loop())
+        if self.mock_point_cloud is not None:
+            self._point_cloud_task = self.loop.create_task(self.point_cloud_loop())
         try:
             self.loop.run_forever()
         finally:
             self.loop.close()
 
     async def _shutdown_async(self):
+        if self._point_cloud_task and not self._point_cloud_task.done():
+            self._point_cloud_task.cancel()
+            await asyncio.gather(self._point_cloud_task, return_exceptions=True)
         if self._publisher_task and not self._publisher_task.done():
             self._publisher_task.cancel()
             await asyncio.gather(self._publisher_task, return_exceptions=True)
         await self.transport.stop()
+
+    async def point_cloud_loop(self):
+        try:
+            await self.mock_point_cloud.run(self.transport.publish)
+        except (RuntimeError, ValueError, OSError) as exc:
+            self.get_logger().error(f'Mock point cloud replay failed: {exc}')
+            await self.transport.publish(encode(message('error', {
+                'code': 'point_cloud_replay_failed', 'message': str(exc),
+            })))
 
     async def ws_connected(self, websocket):
         self.get_logger().info(

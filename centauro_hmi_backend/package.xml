@@ -32,6 +32,7 @@
   <exec_depend>rosbag2_transport</exec_depend>
   <exec_depend>ros2bag</exec_depend>
   <exec_depend>rosbag2_storage_mcap</exec_depend>
+  <exec_depend>rosbag2_py</exec_depend>
   <exec_depend>webrtc_video_stream</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>robotnik_description</exec_depend>

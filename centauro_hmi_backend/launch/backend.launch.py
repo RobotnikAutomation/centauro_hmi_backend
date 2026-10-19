@@ -10,6 +10,9 @@ from launch_ros.actions import Node
 
 from centauro_hmi_backend.camera import DEFAULT_MOCK_ROSBAG_PATH
 from centauro_hmi_backend.mock_camera_launch import mock_camera_actions
+from centauro_hmi_backend.point_cloud import (
+    DEFAULT_SCANS_ROSBAG_PATH, DEFAULT_POINTCLOUD_ROSBAG_PATH, POINT_CLOUD_SOURCES,
+)
 
 
 def generate_launch_description():
@@ -29,6 +32,23 @@ def generate_launch_description():
             default_value=robot_parameters.get('mock.camera_transport', 'websocket'),
             choices=['websocket', 'webrtc'],
             description='Mock video delivery; WebRTC requires the existing TURN service',
+        ),
+        DeclareLaunchArgument(
+            'mock_point_cloud_source',
+            default_value=robot_parameters.get('mock.point_cloud_source', 'none'),
+            choices=list(POINT_CLOUD_SOURCES),
+            description='Exclusive mock point cloud source; none disables replay',
+        ),
+        DeclareLaunchArgument(
+            'mock_scans_rosbag_path',
+            default_value=robot_parameters.get('mock.scans_rosbag_path', DEFAULT_SCANS_ROSBAG_PATH),
+            description='Rosbag containing LaserScan messages to project to XYZ',
+        ),
+        DeclareLaunchArgument(
+            'mock_pointcloud_rosbag_path',
+            default_value=robot_parameters.get(
+                'mock.pointcloud_rosbag_path', DEFAULT_POINTCLOUD_ROSBAG_PATH),
+            description='Rosbag containing PointCloud2 messages',
         ),
         DeclareLaunchArgument(
             'mock_rosbag_path',
@@ -58,6 +78,12 @@ def launch_backend(context, share, config_path, robot_parameters):
             'robot.type': robot_type,
             'mock.camera_transport': camera_transport,
             'mock.rosbag_path': rosbag_path,
+            'mock.point_cloud_source': LaunchConfiguration(
+                'mock_point_cloud_source', default='none').perform(context),
+            'mock.scans_rosbag_path': LaunchConfiguration(
+                'mock_scans_rosbag_path', default=DEFAULT_SCANS_ROSBAG_PATH).perform(context),
+            'mock.pointcloud_rosbag_path': LaunchConfiguration(
+                'mock_pointcloud_rosbag_path', default=DEFAULT_POINTCLOUD_ROSBAG_PATH).perform(context),
         }],
     )
 

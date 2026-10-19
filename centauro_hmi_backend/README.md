@@ -107,6 +107,7 @@ move the mock for a set duration, use `ws_jog_for_seconds_demo` or
 | `robot_description` | Once per WebSocket connection, only in mock mode. |
 | `tf_frames` | On every connection and when the discovered TF frame list changes, in both real and mock modes. |
 | `tf_transform` | Action feedback and final result after `tf.lookup`, including cancellation/failure. |
+| `point_cloud` | Mock-only rosbag replay at the recorded rate, independently of `telemetry_hz`. |
 
 In mock WebSocket mode, `tool_camera` forwards frames from a looping camera
 rosbag as Base64-encoded **raw ROS image pixels**, not PNG/JPEG. Mock WebRTC
@@ -260,6 +261,48 @@ The existing mock visualization launch remains a separate, simplified arm-only
 debug view on `/robot_description`; it does not publish the RB-KAIROS+ topic
 or simulate the full robot's kinematics.
 
+## Mock point cloud playback
+
+Select exactly one startup-only source with `mock.point_cloud_source`:
+`none` (default, disabled), `scans`, or `pointcloud`. Replay only runs when
+`robot.type` is `mock`; real mode never opens either bag. Camera playback is
+independent and can continue alongside the selected point cloud source.
+
+```bash
+# Project recorded LaserScan returns to XYZ in the original laser frame.
+ros2 launch centauro_hmi_backend backend.launch.py robot_type:=mock \
+  mock_point_cloud_source:=scans \
+  mock_scans_rosbag_path:=/home/robot/teleop_ws/src/scanners_point_cloud_10s
+
+# Alternatively, forward recorded PointCloud2 messages without changing their data.
+ros2 launch centauro_hmi_backend backend.launch.py robot_type:=mock \
+  mock_point_cloud_source:=pointcloud \
+  mock_pointcloud_rosbag_path:=/home/robot/teleop_ws/src/front_camera_point_cloud_4s
+```
+
+The corresponding ROS parameters are `mock.point_cloud_source`,
+`mock.scans_rosbag_path`, and `mock.pointcloud_rosbag_path`; the path defaults
+are those shown above. These parameters also work with `ros2 run ... --ros-args -p ...`
+without launching a ROS bag player. Restart the backend to change the source
+or paths. Only the selected bag is opened, and a missing, unreadable, empty,
+or wrong-message-type bag fails startup explicitly.
+
+The backend reads all nonempty topics of the selected message type directly
+from the bag, keeps only one frame in memory, and loops at the recorded message
+intervals. It does not publish replay data onto ROS topics. Scans discard
+non-finite/out-of-range returns and become unorganized XYZ FLOAT32 clouds
+(`z=0`); no TF transform or motion compensation is applied. Native clouds
+retain all fields (including intensity), organization, padding, and endianness.
+The supplied point-cloud recording's topic is `/robot/top_3d_laser/points`,
+despite the directory name.
+
+Both sources emit `point_cloud` messages using the same
+[PointCloud2 WebSocket schema](docs/WEBSOCKET_PROTOCOL.md#mock-point-cloud-stream).
+Source header timestamps reset each loop; `sequence` increases continuously
+and `loop_index` starts at zero. Clients joining mid-replay receive the next
+frame. Large clouds can exceed 1 MiB per JSON message: Python clients should
+set `websockets.connect(..., max_size=None)` or a sufficiently large bound.
+
 ## Mock camera playback
 
 Use **`ros2 launch`** to start the mock with camera playback. The launch reads
@@ -398,6 +441,9 @@ loaded by the launch files.
 | `robot.type` | `mock` | Robot adapter to use: `mock` or `real`. Real mode requires `robotnik_servo` and its robot interfaces to be running. |
 | `mock.camera_transport` | `websocket` | Mock camera delivery: `websocket` or `webrtc`. Startup-only; restart the launch to change it. Does not alter real-mode camera delivery. |
 | `mock.rosbag_path` | `/home/robot/teleop_ws/src/front_camera_10s` | Mock camera rosbag directory containing `metadata.yaml` and its data files. Startup-only; the bag is not copied into the package. |
+| `mock.point_cloud_source` | `none` | Startup-only exclusive mock replay source: `none`, `scans`, or `pointcloud`. |
+| `mock.scans_rosbag_path` | `/home/robot/teleop_ws/src/scanners_point_cloud_10s` | Startup-only bag path used by `scans`; LaserScan returns are projected to XYZ. |
+| `mock.pointcloud_rosbag_path` | `/home/robot/teleop_ws/src/front_camera_point_cloud_4s` | Startup-only bag path used by `pointcloud`; PointCloud2 data is forwarded unchanged. |
 | `websocket_host` | `127.0.0.1` | Network interface on which the WebSocket server listens. |
 | `websocket_port` | `8765` | WebSocket server port. |
 | `websocket_ping_timeout_sec` | `1800.0` | Time allowed for a WebSocket client to reply to a keepalive ping before the connection is closed (30 minutes). |

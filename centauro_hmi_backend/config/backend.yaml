@@ -3,6 +3,9 @@ centauro_hmi_backend:
     robot.type: real # options: real, mock
     mock.camera_transport: websocket # options: websocket, webrtc (mock only)
     mock.rosbag_path: /home/robot/teleop_ws/src/front_camera_10s
+    mock.point_cloud_source: none # options: none, scans, pointcloud (mock only)
+    mock.scans_rosbag_path: /home/robot/teleop_ws/src/scanners_point_cloud_10s
+    mock.pointcloud_rosbag_path: /home/robot/teleop_ws/src/front_camera_point_cloud_4s
     websocket_host: 127.0.0.1
     websocket_port: 8765
     websocket_ping_timeout_sec: 1800.0

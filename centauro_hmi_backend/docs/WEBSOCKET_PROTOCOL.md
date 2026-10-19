@@ -35,6 +35,67 @@ the result of a query, and `error` may include the reason for rejection:
 If the JSON is not an object, `payload` is not an object, or `payload.name` is missing,
 the backend returns `type: "error"` with `payload.code: "invalid_command"`.
 
+## Mock point cloud stream
+
+With `robot.type=mock` and `mock.point_cloud_source=scans` or `pointcloud`,
+the backend broadcasts `point_cloud` at recorded bag speed, looping indefinitely.
+The sources are mutually exclusive. `none` disables both (the default).
+See [configuration and launch examples](../README.md#mock-point-cloud-playback).
+
+```json
+{
+  "type": "point_cloud",
+  "timestamp": 1792414278.0,
+  "payload": {
+    "stream_id": "scans",
+    "source": "scans",
+    "topic": "/robot/laser/filtered_scan",
+    "frame_id": "robot_rear_laser_link",
+    "encoding": "base64",
+    "format": "ros_pointcloud2",
+    "data": "AACAPwAAAAAAAAAA",
+    "height": 1,
+    "width": 1,
+    "fields": [
+      {"name": "x", "offset": 0, "datatype": 7, "count": 1},
+      {"name": "y", "offset": 4, "datatype": 7, "count": 1},
+      {"name": "z", "offset": 8, "datatype": 7, "count": 1}
+    ],
+    "is_bigendian": false,
+    "point_step": 12,
+    "row_step": 12,
+    "is_dense": true,
+    "timestamp": {"sec": 1792409862, "nanosec": 123460298},
+    "sequence": 1,
+    "loop_index": 0
+  }
+}
+```
+
+`data` is the Base64-encoded **PointCloud2 data buffer**, not serialized CDR
+or an array of JSON points. Decode it with the ROS PointField datatype codes,
+field offsets, `point_step`, `row_step`, and `is_bigendian`. Coordinates are
+meters in `frame_id`; `topic` names the original recorded input. For `scans`,
+the original input is LaserScan and only finite, in-range returns are projected
+to XYZ (`z=0`, little-endian FLOAT32). For `pointcloud`, all original fields,
+bytes, row padding, organization, and header values are preserved, including
+invalid points when `is_dense` is false. An empty projected scan has width zero.
+
+`stream_id` and `source` are the selected source (`scans` or `pointcloud`).
+`sequence` increases for every emitted frame across loops; `loop_index` is
+zero-based. Payload `timestamp` is the original header stamp and repeats each
+loop; the envelope timestamp is current send time. Recorded inter-message
+intervals are retained, with a final frame interval before restarting.
+All matching topics are replayed in bag order, without TF transformation,
+ROS topic publication, or a dependency on `telemetry_hz`. Camera delivery
+is unaffected. New clients join at the current playback position.
+
+The supplied native clouds exceed 1 MiB per JSON message. Configure client
+receive limits accordingly (for example `websockets.connect(url, max_size=None)`).
+Startup fails for invalid selected bags. A runtime read/decode failure stops
+this stream, logs the error, and broadcasts `type: "error"` with
+`payload.code: "point_cloud_replay_failed"` and `payload.message`.
+
 ## HMI → backend commands
 
 ### Non-periodic commands
