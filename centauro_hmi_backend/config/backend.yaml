@@ -25,3 +25,6 @@ centauro_hmi_backend:
     log_payload_max_chars: 180
     robot_model_max_size_bytes: 52428800
     robot_model_chunk_size: 65536
+    ik.target_frame: hmi_tcp_target
+    ik.tcp_frame: robot_arm_tool0
+    ik.namespace: robot

@@ -64,6 +64,9 @@ class HmiBackend(Node):
         self.declare_parameter('log_payload_max_chars', 180)
         self.declare_parameter('robot_model_max_size_bytes', 50 * 1024 * 1024)
         self.declare_parameter('robot_model_chunk_size', 64 * 1024)
+        self.declare_parameter('ik.target_frame', 'hmi_tcp_target')
+        self.declare_parameter('ik.tcp_frame', 'robot_arm_tool0')
+        self.declare_parameter('ik.namespace', 'robot')
         robot_type = str(self.get_parameter('robot.type').value)
         base_max_linear_speed, base_max_angular_speed = (1.0, 1.5)
         if robot_type == 'real':

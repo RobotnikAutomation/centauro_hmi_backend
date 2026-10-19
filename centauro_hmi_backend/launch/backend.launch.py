@@ -22,8 +22,25 @@ def generate_launch_description():
         parameters=[config_path],
     )
 
+    ik_params_path = os.path.join(
+        get_package_share_directory('cartesian_kinematics_for_hmi_teleoperation'),
+        'config', 'ik_action_server.yaml')
+    ik_node = Node(
+        package='cartesian_kinematics_for_hmi_teleoperation',
+        executable='ik_action_server',
+        name='cartesian_ik_action_server',
+        namespace=robot_parameters.get('ik.namespace', 'robot'),
+        output='screen',
+        parameters=[ik_params_path, {
+            'target_frame': robot_parameters.get('ik.target_frame', 'hmi_tcp_target'),
+            'tcp_frame': robot_parameters.get('ik.tcp_frame', 'robot_arm_tool0'),
+            'joint_states_topic': robot_parameters.get(
+                'robot.joint_states_topic', '/robot/joint_states'),
+        }],
+    )
+
     if robot_parameters.get('robot.type', 'mock') != 'real':
-        return LaunchDescription([backend_node])
+        return LaunchDescription([ik_node, backend_node])
 
     waiter_node = Node(
         package='centauro_hmi_backend',
@@ -50,4 +67,5 @@ def generate_launch_description():
             on_exit=start_backend_after_waiter,
         )),
         waiter_node,
+        ik_node,
     ])
