@@ -31,3 +31,4 @@ centauro_hmi_backend:
     ik.tcp_frame: robot_arm_tool0
     ik.base_frame: robot_arm_base_link
     ik.namespace: robot
+    tf.action_name: /observe_transform

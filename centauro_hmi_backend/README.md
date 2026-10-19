@@ -86,6 +86,7 @@ Each message is JSON with this envelope:
 | Planning and execution | `arm.plan_to_pose`, `arm.plan_to_joint_configuration`, `arm.execute_trajectory`, `arm.execute_pending_trajectory`, `operation.cancel` |
 | Poses | `poses.list`, `poses.save`, `poses.execute`, `home.set` |
 | Robot model | `robot.model.get`, `robot.model.download` |
+| TF observation (read-only) | `tf.lookup`, `tf.cancel` |
 
 Commands marked as **periodic** must be resent continuously
 (10 Hz is recommended). A single message does not keep the deadman active or
@@ -104,11 +105,130 @@ move the mock for a set duration, use `ws_jog_for_seconds_demo` or
 | `planned_trajectory` | After planning a pose or a joint configuration. |
 | `robot_model_chunk` | After `robot.model.download`, one chunk per message. |
 | `robot_description` | Once per WebSocket connection, only in mock mode. |
+| `tf_frames` | On every connection and when the discovered TF frame list changes, in both real and mock modes. |
+| `tf_transform` | Action feedback and final result after `tf.lookup`, including cancellation/failure. |
 
 In mock WebSocket mode, `tool_camera` forwards frames from a looping camera
 rosbag as Base64-encoded **raw ROS image pixels**, not PNG/JPEG. Mock WebRTC
 mode sends video through the separate WebRTC server and emits no `tool_camera`
 messages. See [Mock camera playback](#mock-camera-playback).
+
+### Available TF frames
+
+Both modes listen to `/tf` and `/tf_static` and send
+`{"type":"tf_frames","timestamp":0.0,"payload":{"frames":["base_link","tool0"]}}`.
+`frames` is a sorted, deduplicated list including parent/root and child frame
+names from all discovered TF trees. Each connection receives the current list;
+changes are broadcast at most once per telemetry tick. An empty graph produces
+`{"frames":[]}`. This reports the live TF buffer, not URDF link names or transform
+poses. Mock mode therefore needs TF publishers (for example the mock
+visualization launch) to discover arm frames; the backend's `sim_base` transform
+is also discovered. Frames remain listed while known to the TF buffer, even if
+their publisher stops; the list does not guarantee a fresh or connected transform.
+
+### Transform lookup and continuous observation
+
+In both mock and real mode, `tf.lookup` uses the sibling
+[`hmi_tfs_manager`](../../hmi_tfs_manager/README.md) action server to obtain the
+observed frame's position and orientation **expressed in the reference frame**.
+This is read-only and does not require teleoperation enable or deadman.
+
+`backend.launch.py` (also included by `complete.launch.py`) starts the TF
+action server automatically in both modes. If starting the backend directly
+with `ros2 run`, start `ros2 run hmi_tfs_manager tf_action_server` separately.
+Build both packages on the host, without a virtual environment:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+cd /home/robot/teleop_ws
+colcon build --packages-select hmi_tfs_manager centauro_hmi_backend \
+  --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+source install/setup.bash
+```
+
+The `tf.action_name` backend parameter defaults to `/observe_transform`;
+the launch remaps the server to the configured name.
+
+Send a one-shot request:
+
+```json
+{"type":"command","request_id":"pose-1","payload":{"name":"tf.lookup","reference_frame":"base_link","observed_frame":"tool0"}}
+```
+
+The immediate response acknowledges submission, not lookup success:
+
+```json
+{"type":"ack","request_id":"pose-1","payload":{"name":"tf.lookup","accepted":true,"result":{"observation_id":"<id>"}}}
+```
+
+Then `tf_transform` messages carry feedback (`final: false`) followed by a
+result (`final: true`), for example:
+
+```json
+{"type":"tf_transform","payload":{"observation_id":"<id>","request_id":"pose-1","reference_frame":"base_link","observed_frame":"tool0","final":true,"success":true,"status":"succeeded","message":"Transform available","stamp":{"sec":42,"nanosec":0},"position":[0.4,0.0,0.5],"orientation":[0.0,0.0,0.0,1.0]}}
+```
+
+Examples omit the backend-generated envelope `timestamp`. `position` is
+`[x,y,z]` in meters and `orientation` is quaternion `[x,y,z,w]`; `stamp` is the
+TF timestamp, not the message's wall-clock timestamp.
+
+For streaming, add `"continuous":true`; the default is `false`. Optional
+`"timeout_sec":2.0` sets maximum wall time without a successful lookup (default
+`5.0`). Feedback runs at the server's `rate_hz` (20 Hz by default).
+Every successful lookup resets this timeout. The server requests the latest
+available TF, including static/cached transforms: **timeout is not a freshness
+or transform-age limit**. Unknown/disconnected frames are retried until timeout,
+then the action aborts with `success:false`, `status:"aborted"` and a TF error.
+
+Cancel using the ID from the lookup acknowledgement:
+
+```json
+{"type":"command","request_id":"cancel-1","payload":{"name":"tf.cancel","observation_id":"<id>"}}
+```
+
+The cancellation acknowledgement means cancellation was requested. A final
+`tf_transform` confirms termination with `status:"canceled"` and
+`success:false`. Cancellation also works while ROS goal acceptance is pending.
+Each connection may have multiple observations; it can cancel only its own.
+Disconnecting cancels all observations started by that connection.
+
+As with other backend events, `tf_transform` is broadcast to all connected
+clients and published on `/centauro/hmi/events`. Filter using `observation_id`
+and `payload.request_id`; feedback can arrive before the immediate ack.
+New connections do not replay existing observations or results.
+
+Missing/invalid frame names, non-boolean `continuous`, or non-positive/non-finite
+`timeout_sec` produce a rejected ack (`invalid_tf_request`). Frames must be
+non-empty strings without whitespace or a leading slash. An unavailable server
+returns `tf_unavailable`; an unknown or another client's observation ID returns
+`unknown_tf_observation`. Later goal rejection or transport errors produce a
+final `tf_transform` with `status:"failed"` and an explanatory message.
+A failed cancellation emits a non-final `status:"cancel_failed"` event; it does
+not claim the observation stopped. Action-aborted/canceled final results contain
+the last successful pose if one exists, otherwise no position/orientation fields.
+Client-side goal/transport failures omit the pose.
+Always check `success` and `status` before consuming the pose as a valid result.
+
+#### Host verification
+
+After building and sourcing the workspace, run the focused tests with system
+Python. An isolated ROS domain and DDS middleware avoid the robot's deployment
+domain/router; the tests start and stop their own server, TF publishers and
+local WebSocket listener and never send robot motion commands:
+
+```bash
+cd /home/robot/teleop_ws/src/centauro_packages_kairos/hmi/centauro_hmi_backend/centauro_hmi_backend
+RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ROS_DOMAIN_ID=191 \
+  /usr/bin/python3 -m pytest -q test/test_tf_observation.py \
+  test/test_tf_observation_integration.py test/test_backend.py
+```
+
+Use a ROS domain reserved for testing in your deployment. The integration tests
+cover composed/reverse transforms, dynamic updates, invalid goals,
+missing/disconnected frames, wall-time timeout with paused simulated time,
+concurrent observations, WebSocket feedback/results, owner-only cancellation,
+and disconnect cleanup. Unit tests also cover cancellation during goal
+acceptance and explicit action-client errors.
 
 ### Robot model
 

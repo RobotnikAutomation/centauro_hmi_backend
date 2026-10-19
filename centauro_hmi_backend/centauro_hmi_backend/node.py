@@ -26,6 +26,8 @@ from .robot_model import ROBOT_DESCRIPTION_TOPIC, RobotModelProvider, load_mock_
 from .real_status import RealStatusBridge
 from .pad_config import load_pad_speed_limits
 from .ik_bridge import CartesianIkBridge
+from .tf_frames import TfFramesBridge
+from .tf_observation import TfObservationBridge
 
 PERIODIC_COMMANDS = {
     'teleoperation.deadman',
@@ -83,6 +85,7 @@ class HmiBackend(Node):
         self.declare_parameter('ik.tcp_frame', 'robot_arm_tool0')
         self.declare_parameter('ik.base_frame', 'robot_arm_base_link')
         self.declare_parameter('ik.namespace', 'robot')
+        self.declare_parameter('tf.action_name', '/observe_transform')
         robot_type = str(self.get_parameter('robot.type').value)
         camera_transport = str(self.get_parameter('mock.camera_transport').value)
         if camera_transport not in ('websocket', 'webrtc'):
@@ -142,7 +145,12 @@ class HmiBackend(Node):
         self.inbound_stats = InboundStats()
         self._last_teleoperation_status = None
         self._last_real_robot_status = None
+        self.tf_frames = TfFramesBridge(self)
+        self._last_tf_frames = None
         self.loop = asyncio.new_event_loop()
+        self.tf_observation = TfObservationBridge(
+            self, self._publish_event, str(self.get_parameter('tf.action_name').value),
+        )
         ik_namespace = str(self.get_parameter('ik.namespace').value).strip('/')
         self.ik_bridge = CartesianIkBridge(
             self,
@@ -217,8 +225,12 @@ class HmiBackend(Node):
                 await self.transport.send_to_client(
                     websocket, encode(message('robot_status', robot_status))
                 )
+        await self.transport.send_to_client(
+            websocket, encode(message('tf_frames', self.tf_frames.snapshot()))
+        )
 
     async def ws_disconnected(self, websocket):
+        self.tf_observation.cancel_owner(websocket)
         self.get_logger().info(
             f'Cliente WebSocket desconectado: {websocket.remote_address}; '
             f'clientes={len(self.transport.clients)}'
@@ -229,6 +241,10 @@ class HmiBackend(Node):
             await asyncio.sleep(1.0 / float(self.get_parameter('telemetry_hz').value))
             with self.lock: payload = self.robot.snapshot()
             await self.transport.publish(encode(message('telemetry', payload)))
+            tf_frames = self.tf_frames.snapshot()
+            if tf_frames != self._last_tf_frames:
+                self._last_tf_frames = tf_frames
+                await self.transport.publish(encode(message('tf_frames', tf_frames)))
             if self.real_status is not None:
                 robot_status, camera_streams = self.real_status.snapshot()
                 if robot_status and robot_status != self._last_real_robot_status:
@@ -284,6 +300,11 @@ class HmiBackend(Node):
                     }
                 else:
                     command_result = ik_bridge.command(payload)
+            elif name == 'tf.lookup':
+                command_result = self.tf_observation.command(
+                    payload, data.get('request_id'), websocket)
+            elif name == 'tf.cancel':
+                command_result = self.tf_observation.cancel(payload, websocket)
             else:
                 with self.lock:
                     command_result = self.robot.command(name, payload)

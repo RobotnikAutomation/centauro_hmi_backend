@@ -28,18 +28,31 @@ flowchart LR
         N <--> A
     end
     TELEOPERATION_NODE["robotnik_servo teleoperation node"]
+    TF_MANAGER["hmi_tfs_manager<br/>TF observation action server"]
     RSP["robot_state_publisher"]
     RVIZ["RViz2"]
 
     HMI <-->|"JSON over ws://127.0.0.1:8765"| T
     HMI -.->|"alternative without WebSocket:<br/>/centauro/hmi/command"| N
     A <--> TELEOPERATION_NODE
+    N <-->|"/observe_transform action"| TF_MANAGER
     N -->|"/joint_states"| RSP --> RVIZ
     N -->|"/centauro/hmi/planned_tool_path"| RVIZ
 ```
 
 The transport, message contract, and robot implementation are separate: switching
 between the mock and real adapters does not change the contract seen by the HMI.
+
+Read-only TF observation is also available in both modes. Send `tf.lookup` with
+`reference_frame` and `observed_frame` to receive position and quaternion
+orientation via `tf_transform` feedback and a final result. Lookups are one-shot
+by default; `continuous: true` streams until `tf.cancel`, disconnect, or lookup
+timeout. The launch starts the sibling `hmi_tfs_manager` action server
+automatically. Build that package alongside the backend using host system
+Python/ROS, not a virtual environment. See the
+[backend README](centauro_hmi_backend/README.md#transform-lookup-and-continuous-observation)
+for request/response examples, cancellation, errors, and cached-TF semantics,
+and the [TF server README](../hmi_tfs_manager/README.md) for the ROS action.
 
 ## Packages
 

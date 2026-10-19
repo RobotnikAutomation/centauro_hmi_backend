@@ -212,4 +212,34 @@ def test_real_launch_never_starts_bag_or_webrtc(monkeypatch):
                for action in actions)
     assert [action.node_package for action in actions if isinstance(action, Node)] == [
         'centauro_hmi_backend', 'cartesian_kinematics_for_hmi_teleoperation',
+        'hmi_tfs_manager',
     ]
+
+
+@pytest.mark.parametrize('robot_type', ['real', 'mock'])
+def test_launch_starts_tf_action_server_with_configured_name(monkeypatch, robot_type):
+    spec = importlib.util.spec_from_file_location(
+        'backend_launch_tf', PACKAGE_ROOT / 'launch' / 'backend.launch.py'
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    node_factory = Mock(side_effect=Node)
+    monkeypatch.setattr(module, 'Node', node_factory)
+    monkeypatch.setattr(module, 'mock_camera_actions', Mock(return_value=[]))
+    monkeypatch.setattr(module, 'get_package_share_directory', lambda _: str(PACKAGE_ROOT))
+    context = LaunchContext()
+    context.launch_configurations.update({
+        'robot_type': robot_type, 'mock_camera_transport': 'websocket',
+        'mock_rosbag_path': '/unused',
+    })
+
+    module.launch_backend(context, str(PACKAGE_ROOT), '/unused.yaml',
+                          {'tf.action_name': '/custom/observe_transform'})
+
+    tf_calls = [call for call in node_factory.call_args_list
+                if call.kwargs['package'] == 'hmi_tfs_manager']
+    assert len(tf_calls) == 1
+    assert tf_calls[0].kwargs['executable'] == 'tf_action_server'
+    assert tf_calls[0].kwargs['remappings'] == [
+        ('observe_transform', '/custom/observe_transform')]

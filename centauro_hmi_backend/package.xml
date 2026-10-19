@@ -13,6 +13,8 @@
   <exec_depend>robot_bringup</exec_depend>
   <exec_depend>robotnik_servo</exec_depend>
   <depend>cartesian_kinematics_for_hmi_teleoperation</depend>
+  <depend>hmi_tfs_manager</depend>
+  <depend>action_msgs</depend>
   <exec_depend>tf2_ros_py</exec_depend>
   <exec_depend>launch</exec_depend>
   <depend>sensor_msgs</depend>

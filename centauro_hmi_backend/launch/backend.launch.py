@@ -77,6 +77,13 @@ def launch_backend(context, share, config_path, robot_parameters):
                 'robot.joint_states_topic', '/robot/joint_states'),
         }],
     )
+    tf_node = Node(
+        package='hmi_tfs_manager',
+        executable='tf_action_server',
+        output='screen',
+        remappings=[('observe_transform', robot_parameters.get(
+            'tf.action_name', '/observe_transform'))],
+    )
 
     if robot_type != 'real':
         return camera_actions + [
@@ -85,6 +92,7 @@ def launch_backend(context, share, config_path, robot_parameters):
                 on_exit=[Shutdown(reason='Mock backend exited; stopping camera processes')],
             )),
             ik_node,
+            tf_node,
             backend_node,
         ]
 
@@ -114,4 +122,5 @@ def launch_backend(context, share, config_path, robot_parameters):
         )),
         waiter_node,
         ik_node,
+        tf_node,
     ]

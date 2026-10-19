@@ -51,9 +51,16 @@ the backend returns `type: "error"` with `payload.code: "invalid_command"`.
 | — | `arm.execute_pending_trajectory` | — | `ack`, with `accepted: true/false` and the IDs in `result`. | Executes the single trajectory awaiting confirmation, if one exists. |
 | — | `robot.model.get` | — | `ack` with the manifest in `result`. | Describes the available URDF model and its assets without transferring their bytes. |
 | — | `robot.model.download` | — | `ack` with the manifest in `result`, followed by `robot_model_chunk`. | Downloads the model ZIP in Base64 chunks. |
+| — | `tf.lookup` | `reference_frame: string`, `observed_frame: string`, optional `continuous: boolean` (false), `timeout_sec: number` (5.0) | `ack` with `result.observation_id`. | Read-only TF action; emits `tf_transform` feedback/result. |
+| — | `tf.cancel` | `observation_id: string` | `ack`, with `accepted: true/false`. | Requests cancellation of this connection's observation, including pending goals. |
 | H2B-010 | `poses.list`, `poses.save`, `poses.execute` | Depends on the operation; `poses.save` uses optional `pose_id: string`, `pose_name: string`, and `pose: object` | `ack`, with `accepted: true/false`; `poses.list` includes the poses in `result`. | Queries, validates/saves, or executes predefined poses. Corresponds to the `pose_management` actions. |
 | H2B-011 | `home.set` | `pose: object`, `frame_id: string` | `ack`, with `accepted: true/false`. | Validates and persistently saves the robot's Home pose. |
 | H2B-014 | `operation.cancel` | `operation_id: string` | `ack`, with `accepted: true/false`. | Safely cancels the specified active planning or execution operation. |
+
+See [Transform lookup and continuous observation](../README.md#transform-lookup-and-continuous-observation)
+for the `tf_transform` schema, correlation, broadcasts, disconnect cancellation,
+error codes and timeout semantics. Positions are observed-frame coordinates in
+the reference frame; TF lookup timeout does not enforce transform freshness.
 
 ### Periodic commands
 
@@ -119,6 +126,7 @@ Messages emitted by the backend use the same JSON envelope
 | — | `error` | Envelope error or a periodic command that cannot be processed. | `code`, `message`, and `name` when known. It is part of the WebSocket envelope and has no separate row in the Excel spreadsheet. |
 | — | `teleoperation_status` | When teleoperation starts, ends, or its effective state changes. | `enabled`, `active`, `deadman`, `freedrive`, `mode`, `speed_percentage`, safety state, and `reason`. The Excel spreadsheet does not define a specific equivalent B2H message. |
 | B2H-001, B2H-002 | `telemetry` | Periodic. | Joint state, available pose/frame, and effective teleoperation state: `enabled`, `active`, `deadman`, `freedrive`, `mode`, `speed_percentage`, and safety state. Combines the contents of `/joint_states` and `/tf + /tf_static`. |
+| — | `tf_frames` | On every connection and whenever the discovered frame list changes, in both real and mock modes. | `frames`: sorted, unique TF frame names, including roots. |
 | B2H-006 | `constraints` | Periodically or on change. | Blocked/limited directions or axes, maximum speed, and reason. |
 | B2H-011 | `robot_status` | Periodically or on change. | Mock mode emits demo values. Real mode includes the latest available `base_status`, `robot_mode`, `robot_program_running`, `safety_mode`, `tool_data`, `safety_module_status`, and `battery` fields; `battery_percentage` is copied from `battery.level`. |
 | B2H-009 | `operation_status` | During an operation and on state changes. | `operation_id`, `status`, normalized `progress`, and `result` or `error`. |
@@ -146,6 +154,26 @@ external-control program is running from
 the UR arm's numeric mode; the nested one is the safety module's string mode.
 Values are the latest received samples and can have different update times;
 fields are absent until their topics have delivered a sample.
+
+### Available TF frames
+
+Both real and mock modes subscribe to `/tf` and `/tf_static`, including latched
+static transforms from publishers that started before the backend. Every
+connection (including reconnects) receives the current frame list:
+
+```json
+{"type":"tf_frames","timestamp":1730000001.0,"payload":{"frames":["base_link","sim_base","tool0"]}}
+```
+
+The list is sorted and deduplicated and includes both parent/root and child
+names across all discovered TF trees. Changes are broadcast to all clients at
+most once per `telemetry_hz` tick; pose updates alone do not resend the list.
+Before any TF is received, `frames` is `[]`. This is discovery of the ROS TF
+buffer, not a list synthesized from the robot model, and contains no transform
+poses. Mock arm frames require a TF publisher such as the mock visualization
+launch; the backend's own `sim_base` TF is discovered in the same way.
+Frame names remain known to the buffer even after a publisher stops; inclusion
+does not guarantee a fresh transform or connectivity to another listed frame.
 
 ### Robot model
 
