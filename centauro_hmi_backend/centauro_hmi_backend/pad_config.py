@@ -5,18 +5,27 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 
 
-def load_pad_speed_limits(pad_model):
+def load_pad_speed_limits(pad_model, robot_type):
     pad_model = str(pad_model).strip()
     if not pad_model or Path(pad_model).name != pad_model or pad_model in (".", ".."):
         raise ValueError(f"invalid pad model name: {pad_model!r}")
 
-    config_path = (
-        Path(get_package_share_directory("robot_bringup"))
-        / "config"
-        / "base"
-        / "pad"
-        / f"{pad_model}.yaml"
-    )
+    if robot_type == "mock":
+        config_path = (
+            Path(get_package_share_directory("centauro_hmi_backend"))
+            / "config"
+            / "mock"
+            / "pad"
+            / f"{pad_model}.yaml"
+        )
+    else:
+        config_path = (
+            Path(get_package_share_directory("robot_bringup"))
+            / "config"
+            / "base"
+            / "pad"
+            / f"{pad_model}.yaml"
+        )
     try:
         with config_path.open(encoding="utf-8") as config_file:
             config = yaml.safe_load(config_file)

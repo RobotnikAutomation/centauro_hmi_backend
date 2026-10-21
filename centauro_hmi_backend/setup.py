@@ -13,6 +13,10 @@ setup(
             'config/backend.yaml',
             'config/mock_camera_webrtc.yaml',
         ]),
+        ('share/' + package_name + '/config/mock/pad', [
+            'config/mock/pad/ps4.yaml',
+            'config/mock/pad/ps5.yaml',
+        ]),
         ('share/' + package_name + '/launch', [
             'launch/backend.launch.py',
             'launch/mock_visualization.launch.py',

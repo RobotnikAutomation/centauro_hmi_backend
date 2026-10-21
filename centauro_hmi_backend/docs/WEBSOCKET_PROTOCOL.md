@@ -167,7 +167,8 @@ Base joystick example (axis values are normalized to `[-1, 1]`):
 
 With the default PS4/PS5 pad configuration, this converts to
 `linear.x = 0.5 m/s`, `linear.y = -0.25 m/s`, and `angular.z = 0.6 rad/s`.
-Limits are loaded from the selected `robot_bringup/config/base/pad/<pad_model>.yaml`;
+Limits are loaded from the selected bundled backend profile in mock mode, or
+`robot_bringup/config/base/pad/<pad_model>.yaml` in real mode;
 linear z and angular x/y must be zero. In real mode, the backend republishes the
 latest command at 100 Hz and publishes zero after `command_timeout_sec` without
 a fresh joystick message. In mock mode, it broadcasts `base_link -> sim_base`

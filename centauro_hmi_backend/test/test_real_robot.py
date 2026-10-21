@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from centauro_hmi_backend.robots.real_robot import (
@@ -5,6 +7,7 @@ from centauro_hmi_backend.robots.real_robot import (
     RobotnikTeleoperationRobot,
 )
 from centauro_hmi_backend.robot import create_robot
+from centauro_hmi_backend import pad_config
 from centauro_hmi_backend.pad_config import load_pad_speed_limits
 from std_msgs.msg import Int32
 
@@ -84,9 +87,43 @@ def make_robot(parameter_client=None):
     return robot, node
 
 
-def test_pad_speed_limits_are_loaded_from_robot_bringup_configs():
-    assert load_pad_speed_limits('ps4') == (1.0, 1.5)
-    assert load_pad_speed_limits('ps5') == (1.0, 1.5)
+def test_mock_pad_speed_limits_are_loaded_from_backend_configs(monkeypatch):
+    package_root = Path(__file__).parents[1]
+    requested_packages = []
+
+    def get_package_share_directory(package_name):
+        requested_packages.append(package_name)
+        return str(package_root)
+
+    monkeypatch.setattr(pad_config, 'get_package_share_directory', get_package_share_directory)
+
+    assert load_pad_speed_limits('ps4', 'mock') == (1.0, 1.5)
+    assert load_pad_speed_limits('ps5', 'mock') == (1.0, 1.5)
+    assert requested_packages == ['centauro_hmi_backend', 'centauro_hmi_backend']
+
+
+def test_real_pad_speed_limits_are_loaded_from_robot_bringup_configs(tmp_path, monkeypatch):
+    config_path = tmp_path / 'config' / 'base' / 'pad' / 'ps5.yaml'
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        '"/**":\n'
+        '  robotnik_pad:\n'
+        '    ros__parameters:\n'
+        '      Movement:\n'
+        '        max_linear_speed: 0.7\n'
+        '        max_angular_speed: 1.2\n',
+        encoding='utf-8',
+    )
+    requested_packages = []
+
+    def get_package_share_directory(package_name):
+        requested_packages.append(package_name)
+        return str(tmp_path)
+
+    monkeypatch.setattr(pad_config, 'get_package_share_directory', get_package_share_directory)
+
+    assert load_pad_speed_limits('ps5', 'real') == (0.7, 1.2)
+    assert requested_packages == ['robot_bringup']
 
 
 def test_ros_teleoperation_mode_feedback_updates_websocket_snapshot():

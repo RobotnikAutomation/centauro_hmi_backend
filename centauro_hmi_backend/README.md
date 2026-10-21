@@ -57,8 +57,8 @@ rosdep install --from-paths src --ignore-src --rosdistro jazzy -r -y
 
 This package uses `rclpy`, `rcl_interfaces`, standard/control/image messages,
 `robotnik_battery_msgs`, `robotnik_hardware_msgs`, `robotnik_safety_msgs`,
-`ur_dashboard_msgs`, `ur_msgs`, `robot_bringup`, launch, `robot_state_publisher`, and RViz2. The
-real adapter additionally requires the custom `robotnik_servo` package and its
+`ur_dashboard_msgs`, `ur_msgs`, launch, `robot_state_publisher`, and RViz2. Real
+mode also requires `robot_bringup`, the custom `robotnik_servo` package, and its
 robot driver/controller dependencies to be built in this workspace or installed in a sourced overlay.
 That package is not installed by `apt` through this README; include its source
 workspace before building/running this backend. The example-client package also
@@ -453,7 +453,7 @@ loaded by the launch files.
 | `initial_speed_percentage` | `25.0` | Initial mock speed limit, as a percentage. Real mode reads the teleoperation node's `default_velocity_percentage` parameter. |
 | `robot.joint_states_topic` | `/robot/joint_states` | Joint-state feedback topic used by the real adapter. |
 | `robot.base_cmd_vel_topic` | `/robot/pad_teleop/cmd_vel` | Real-mode planar base velocity output (`geometry_msgs/Twist`). |
-| `robot.pad_model` | `JOY_CONFIG` environment variable, or `ps5` | Pad profile whose `Movement` speed limits are loaded from `robot_bringup/config/base/pad/<pad_model>.yaml`. |
+| `robot.pad_model` | `JOY_CONFIG` environment variable, or `ps5` | Pad profile whose `Movement` speed limits come from the backend's bundled profiles in mock mode and `robot_bringup/config/base/pad/<pad_model>.yaml` in real mode. |
 | `robot.teleoperation_node_name` | `/robot/arm_teleoperation_node` in the node defaults; configurable in `config/backend.yaml` | Fully qualified teleoperation node name queried for `default_velocity_percentage`. |
 | `robot.image_streams` | `front_camera=/robot/front_rgbd_camera/color/image_raw` | List of `stream_name=/image/topic` entries; add entries to forward multiple image streams. |
 | `robot.battery_topic` | `/robot/battery_estimator/data` | Battery status source; `level` is sent as `battery_percentage`. |

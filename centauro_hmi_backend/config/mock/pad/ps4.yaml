@@ -1,0 +1,83 @@
+/**:
+  robotnik_pad:
+    ros__parameters:
+      desired_freq: 10.0
+      pad:
+        num_of_buttons: 13
+        num_of_axes: 8
+        joy_topic: joy
+        joy_timeout: 1.0
+      plugins:
+        - Movement
+        - UrArm
+
+      Movement:
+        type: robotnik_pad_plugins/Movement
+        max_linear_speed: 1.0
+        max_angular_speed: 1.5
+        cmd_topic_vel: pad_teleop/cmd_vel
+        config:
+          button_deadman: 5
+          axis_linear_x: 1
+          axis_linear_y: 0
+          axis_angular_z: 3
+          button_speed_up: 2
+          button_speed_down: 0
+          button_kinematic_mode: 7
+          use_accel_watchdog: false
+          axis_watchdog: [1,]
+          watchdog_duration: 0.5
+
+      UrArm:
+        type: ur_arm_pad_plugin/UrArm
+        buttons_test_flag: false
+        arm_cartesian_control_topic_name: /robot/arm/servo/cartesian_teleoperation
+        arm_joint_control_topic_name: /robot/arm/servo/joint_teleoperation
+        play_arm_program_service_name: /robot/arm/dashboard_client/play
+        stop_arm_program_service_name: /robot/arm/dashboard_client/stop
+        robot_in_emergency_topic_name: /robot/safety_module/emergency_stop
+        go_home_action_name: /robot/arm/teleoperation/homing
+        max_linear_speed: 1.0
+        max_angular_speed: 2.0
+        config:
+          use_accel_watchdog: false
+          axis_watchdog: [0,1,2,3,4,5,6,7]
+          watchdog_duration: 0.5
+          joints_names:
+            - robot_arm_shoulder_pan_joint
+            - robot_arm_shoulder_lift_joint
+            - robot_arm_elbow_joint
+            - robot_arm_wrist_1_joint
+            - robot_arm_wrist_2_joint
+            - robot_arm_wrist_3_joint
+          axis_linear_x: 1
+          axis_linear_y: 0
+          axis_linear_z_up: 7
+          axis_linear_z_down: 6
+          axis_angular_x: 3
+          axis_angular_y: 4
+          button_angular_z_positive: 1
+          button_angular_z_negative: 3
+          axis_base_joint_angular_z_positive: 0
+          axis_base_joint_angular_z_negative: 0
+          axis_shoulder_joint_angular_z_positive: 4
+          axis_shoulder_joint_angular_z_negative: 4
+          axis_forearm_joint_angular_z_positive: 7
+          axis_forearm_joint_angular_z_negative: 7
+          axis_wrist_1_joint_angular_z_positive: 6
+          axis_wrist_1_joint_angular_z_negative: 6
+          button_wrist_2_joint_angular_z_positive: 3
+          button_wrist_2_joint_angular_z_negative: 1
+          button_wrist_3_joint_angular_z_positive: 8
+          button_wrist_3_joint_angular_z_negative: 9
+          button_platform_deadman: 5
+          button_manipulation_deadman: 4
+          button_home_arm: 10
+          button_teleoperation_mode: 7
+          button_free_drive_mode: 6
+          button_play_ur_program: 11
+          button_stop_ur_program: 12
+          button_speed_up: 2
+          button_speed_down: 0
+          axis_2: 2
+          axis_5: 5

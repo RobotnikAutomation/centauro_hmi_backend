@@ -118,7 +118,8 @@ class HmiBackend(Node):
                 self, [f'front_camera={FRONT_CAMERA_TOPIC}']
             )
         base_max_linear_speed, base_max_angular_speed = load_pad_speed_limits(
-            self.get_parameter('robot.pad_model').value
+            self.get_parameter('robot.pad_model').value,
+            robot_type,
         )
         self.robot = create_robot(
             robot_type,
