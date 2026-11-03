@@ -76,6 +76,14 @@ def make_bridge(ready=True):
     return bridge, client, broadcaster, events
 
 
+class FakeTfObservation:
+    def command(self, payload, request_id=None, owner=None, on_complete=None):
+        self.payload = payload
+        self.request_id = request_id
+        self.on_complete = on_complete
+        return {'accepted': True, 'result': {'observation_id': 'observation-1'}}
+
+
 POSE = {'pose': {'position': [0.4, 0.0, 0.5], 'orientation': [0.0, 2.0, 0.0, 0.0]}}
 
 
@@ -117,6 +125,43 @@ def test_target_rejected_when_server_unavailable():
 
     assert result['error']['code'] == 'ik_unavailable'
     assert len(broadcaster.transforms) == 1
+
+
+def test_reset_uses_current_tcp_pose_as_cartesian_target():
+    bridge, client, broadcaster, events = make_bridge()
+    observation = FakeTfObservation()
+
+    result = bridge.reset_to_current_tcp(observation, 'reset-1')
+
+    assert result['accepted']
+    assert observation.payload == {
+        'reference_frame': 'robot_arm_base_link',
+        'observed_frame': 'robot_arm_tool0',
+        'continuous': False,
+    }
+    assert observation.request_id == 'reset-1'
+    observation.on_complete({
+        'final': True,
+        'success': True,
+        'position': [0.4, 0.0, 0.5],
+        'orientation': [0.0, 1.0, 0.0, 0.0],
+    })
+
+    assert len(broadcaster.transforms) == 1
+    transform = broadcaster.transforms[0]
+    assert transform.header.frame_id == 'robot_arm_base_link'
+    assert transform.child_frame_id == 'hmi_tcp_target'
+    assert transform.transform.translation.x == 0.4
+    assert transform.transform.rotation.y == 1.0
+    assert len(client.goals) == 1 and client.goals[0].continuous
+    assert events[-1] == ('cartesian_target_reset', {
+        'final': True,
+        'success': True,
+        'frame_id': 'robot_arm_base_link',
+        'request_id': 'reset-1',
+        'position': [0.4, 0.0, 0.5],
+        'orientation': [0.0, 1.0, 0.0, 0.0],
+    })
 
 
 def test_feedback_and_result_are_published_as_ik_solution():

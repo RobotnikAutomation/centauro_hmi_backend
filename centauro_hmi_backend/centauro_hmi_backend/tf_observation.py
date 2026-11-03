@@ -17,6 +17,7 @@ class Observation:
     owner: object
     handle: ClientGoalHandle | None = None
     cancel_requested: bool = False
+    on_complete: object = None
 
 
 def transform_payload(transform):
@@ -43,7 +44,7 @@ class TfObservationBridge:
     def _rejected(code, message):
         return {'accepted': False, 'error': {'code': code, 'message': message}}
 
-    def command(self, payload, request_id=None, owner=None):
+    def command(self, payload, request_id=None, owner=None, on_complete=None):
         frames = [payload.get('reference_frame'), payload.get('observed_frame')]
         if any(not isinstance(frame, str) or not frame or frame.startswith('/') or
                any(char.isspace() for char in frame) for frame in frames):
@@ -68,7 +69,8 @@ class TfObservationBridge:
                 'tf_unavailable', 'TF observation action server is not available')
 
         observation_id = str(uuid.uuid4())
-        observation = Observation(frames[0], frames[1], request_id, owner)
+        observation = Observation(
+            frames[0], frames[1], request_id, owner, on_complete=on_complete)
         with self._lock:
             self._observations[observation_id] = observation
         goal = ObserveTransform.Goal()
@@ -120,9 +122,12 @@ class TfObservationBridge:
         with self._lock:
             observation = self._observations.pop(observation_id, None)
         if observation is not None:
-            self._emit(observation_id, observation, {
+            payload = {
                 'final': True, 'success': False, 'status': 'failed', 'message': message,
-            })
+            }
+            self._emit(observation_id, observation, payload)
+            if observation.on_complete is not None:
+                observation.on_complete(payload)
 
     def _cancel_goal(self, observation_id, handle):
         try:
@@ -196,3 +201,5 @@ class TfObservationBridge:
             observation = self._observations.pop(observation_id, None)
         if observation is not None:
             self._emit(observation_id, observation, payload)
+            if observation.on_complete is not None:
+                observation.on_complete(payload)

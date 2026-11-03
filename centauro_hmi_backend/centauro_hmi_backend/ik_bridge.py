@@ -30,12 +30,16 @@ def parse_target_pose(payload, default_frame_id):
 class CartesianIkBridge:
     """Publishes HMI Cartesian targets as TF and streams IK solutions from the action server."""
 
-    def __init__(self, node, publish_event, target_frame, default_frame_id, action_name,
-                 timeout_sec, action_client=None, tf_broadcaster=None):
+    def __init__(
+        self, node, publish_event, target_frame, default_frame_id, action_name,
+        timeout_sec, action_client=None, tf_broadcaster=None,
+        tcp_frame='robot_arm_tool0',
+    ):
         self.node = node
         self.publish_event = publish_event
         self.target_frame = target_frame
         self.default_frame_id = default_frame_id
+        self.tcp_frame = tcp_frame
         self.timeout_sec = timeout_sec
         if action_client is None:
             from rclpy.action import ActionClient
@@ -87,6 +91,53 @@ class CartesianIkBridge:
         future = self._client.send_goal_async(goal, feedback_callback=self._feedback_callback)
         future.add_done_callback(self._goal_response_callback)
         return {'accepted': True}
+
+    def reset_to_current_tcp(self, tf_observation, request_id=None):
+        """Snapshot the live TCP pose and submit it as the IK target."""
+        def on_transform(result):
+            reset_event = {
+                'final': True,
+                'success': False,
+                'frame_id': self.default_frame_id,
+            }
+            if request_id is not None:
+                reset_event['request_id'] = request_id
+
+            if not result.get('success'):
+                reset_event['message'] = result.get(
+                    'message', 'Could not read the current TCP pose')
+            else:
+                target = {
+                    'frame_id': self.default_frame_id,
+                    'pose': {
+                        'position': result.get('position'),
+                        'orientation': result.get('orientation'),
+                    },
+                }
+                try:
+                    command_result = self.command(target)
+                except Exception as exc:
+                    command_result = self._rejected('ik_unavailable', str(exc))
+                reset_event['success'] = command_result['accepted']
+                if command_result['accepted']:
+                    reset_event.update({
+                        'position': result['position'],
+                        'orientation': result['orientation'],
+                    })
+                else:
+                    reset_event['message'] = command_result['error']['message']
+
+            self.publish_event('cartesian_target_reset', reset_event)
+
+        return tf_observation.command(
+            {
+                'reference_frame': self.default_frame_id,
+                'observed_frame': self.tcp_frame,
+                'continuous': False,
+            },
+            request_id=request_id,
+            on_complete=on_transform,
+        )
 
     def tick(self):
         with self._lock:

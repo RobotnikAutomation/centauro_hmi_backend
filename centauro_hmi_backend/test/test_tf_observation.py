@@ -94,6 +94,26 @@ def test_default_goal_feedback_and_result_have_exact_coordinates_and_correlation
     assert not bridge._observations
 
 
+def test_completion_callback_receives_final_transform_after_event():
+    bridge, _, handle, _, events = make_bridge()
+    completed_results = []
+    bridge.command(PAYLOAD, on_complete=completed_results.append)
+    transform = TransformStamped()
+    transform.header.frame_id = 'base'
+    transform.child_frame_id = 'tool'
+    transform.transform.rotation.w = 1.0
+    handle.get_result_async.return_value.set_result(SimpleNamespace(
+        status=GoalStatus.STATUS_SUCCEEDED,
+        result=ObserveTransform.Result(
+            success=True, message='Transform available', transform=transform),
+    ))
+
+    assert len(completed_results) == 1
+    assert completed_results[0]['success']
+    assert completed_results[0]['position'] == [0.0, 0.0, 0.0]
+    assert [kind for kind, _ in events] == ['tf_transform']
+
+
 def test_cancel_before_acceptance_and_disconnect_cancel_all_only_owned_goals():
     bridge, client, handle, future, _ = make_bridge(pending=True)
     owner = object()

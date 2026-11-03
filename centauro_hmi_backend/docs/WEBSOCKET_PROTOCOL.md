@@ -136,6 +136,7 @@ backend only responds with `error` if it cannot process them.
 | — | `base.joystick` | `twist: {"linear": [x, y, 0], "angular": [0, 0, yaw]}` | Periodically while controlling the base; interval must remain below `command_timeout_sec`. | Scales normalized planar axes. Real mode publishes `geometry_msgs/Twist` to `/robot/pad_teleop/cmd_vel`; mock mode integrates planar motion and broadcasts `base_link -> sim_base`. Both run at `base_cmd_vel_hz` (100 Hz by default). | Real mode publishes zero velocity; mock mode holds the last pose until fresh joystick input arrives. |
 | H2B-007 | `teleoperation.freedrive` | `active: boolean` | **10 Hz** while `active` is `true`; the interval must always be less than `0.5 s`. | Keeps freedrive active while the periodic command continues to arrive and `active` is `true`. | After `0.5 s` by default, disables freedrive and emits `teleoperation_status` with `freedrive: false` and `reason: "freedrive_timeout"`. |
 | — | `arm.cartesian_target` | `pose: {"position": [x, y, z], "orientation": [qx, qy, qz, qw]}`, optional `frame_id: string` (default `ik.base_frame`) | Periodically while following; interval must remain below `command_timeout_sec`. | Broadcasts the pose as TF `ik.target_frame` and keeps a continuous goal on the `cartesian_kinematics_for_hmi_teleoperation` IK action server. IK solutions are streamed back as `ik_solution`. Does not move the robot. | After `0.5 s` by default, cancels the IK goal; a final `ik_solution` is emitted. |
+| — | `arm.cartesian_target.reset` | None | Once per reset request. | Snapshots `ik.tcp_frame` in `ik.base_frame`, broadcasts that pose as `ik.target_frame`, and starts or updates the continuous IK goal. Emits `cartesian_target_reset` when the snapshot and target update complete. Does not move the robot. | The IK goal is canceled after `command_timeout_sec` unless fresh Cartesian target commands arrive. |
 
 Joint jog example:
 
@@ -524,6 +525,20 @@ Immediate response: none. The backend streams `ik_solution` messages:
 ```json
 {"type":"ik_solution","timestamp":1730000001.02,"request_id":null,"payload":{"final":false,"joint_names":["robot_arm_shoulder_pan_joint","robot_arm_shoulder_lift_joint","robot_arm_elbow_joint","robot_arm_wrist_1_joint","robot_arm_wrist_2_joint","robot_arm_wrist_3_joint"],"positions":[0.0,-1.2,1.4,-1.8,-1.57,0.0],"position_error":0.0001,"orientation_error":0.0002,"joint_delta_norm":0.003}}
 ```
+
+#### `arm.cartesian_target.reset`
+
+Request:
+
+```json
+{"type":"command","request_id":"ik-reset-001","payload":{"name":"arm.cartesian_target.reset"}}
+```
+
+The immediate `ack` confirms that the TCP transform lookup was started. On completion,
+the backend emits `cartesian_target_reset` with `final`, `success`, `frame_id`, and,
+on success, the captured `position` and `orientation`. The request ID is included in
+the event payload for correlation. An IK-unavailable or transform lookup failure is
+reported as `success: false` with a `message`.
 
 #### `teleoperation.freedrive`
 

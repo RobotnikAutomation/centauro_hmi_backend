@@ -94,6 +94,31 @@ def test_tf_commands_forward_to_action_bridge(name, method):
     assert response['payload']['result']['observation_id'] == 'obs-1'
 
 
+def test_cartesian_target_reset_routes_to_ik_bridge():
+    backend = make_backend()
+    websocket = FakeWebSocket()
+    backend.ik_bridge = Mock()
+    backend.ik_bridge.reset_to_current_tcp.return_value = {
+        'accepted': True, 'result': {'observation_id': 'obs-1'},
+    }
+
+    send(backend, websocket, {
+        'request_id': 'ik-reset-1',
+        'payload': {'name': 'arm.cartesian_target.reset'},
+    })
+
+    backend.ik_bridge.reset_to_current_tcp.assert_called_once_with(
+        backend.tf_observation, 'ik-reset-1')
+    response = json.loads(websocket.messages[0])
+    assert response['type'] == 'ack'
+    assert response['request_id'] == 'ik-reset-1'
+    assert response['payload'] == {
+        'name': 'arm.cartesian_target.reset',
+        'accepted': True,
+        'result': {'observation_id': 'obs-1'},
+    }
+
+
 def test_disconnect_cancels_clients_tf_observations():
     backend = make_backend()
     websocket = FakeWebSocket()

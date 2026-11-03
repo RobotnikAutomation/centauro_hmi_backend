@@ -182,6 +182,7 @@ class HmiBackend(Node):
             str(self.get_parameter('ik.base_frame').value),
             f'/{ik_namespace}/follow_tcp_target' if ik_namespace else '/follow_tcp_target',
             float(self.get_parameter('command_timeout_sec').value),
+            tcp_frame=str(self.get_parameter('ik.tcp_frame').value),
         )
         self._publisher_task = None
         self._shutting_down = False
@@ -333,10 +334,23 @@ class HmiBackend(Node):
                 if ik_bridge is None:
                     command_result = {
                         'accepted': False,
-                        'error': {'code': 'ik_unavailable', 'message': 'IK bridge is not configured'},
+                        'error': {
+                            'code': 'ik_unavailable',
+                            'message': 'IK bridge is not configured',
+                        },
                     }
                 else:
                     command_result = ik_bridge.command(payload)
+            elif name == 'arm.cartesian_target.reset':
+                ik_bridge = getattr(self, 'ik_bridge', None)
+                if ik_bridge is None:
+                    command_result = {
+                        'accepted': False,
+                        'error': {'code': 'ik_unavailable', 'message': 'IK bridge is not configured'},
+                    }
+                else:
+                    command_result = ik_bridge.reset_to_current_tcp(
+                        self.tf_observation, data.get('request_id'))
             elif name == 'tf.lookup':
                 command_result = self.tf_observation.command(
                     payload, data.get('request_id'), websocket)
