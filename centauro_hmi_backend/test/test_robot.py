@@ -20,6 +20,7 @@ def test_real_robot_requires_ros_node():
         create_robot('real', 25.0, 0.5)
 
 
-def test_unknown_robot_type_is_rejected():
+@pytest.mark.parametrize('robot_type', ['robot', 'gazebo'])
+def test_unknown_robot_type_is_rejected(robot_type):
     with pytest.raises(ValueError, match='Tipo de robot no soportado'):
-        create_robot('gazebo', 25.0, 0.5)
+        create_robot(robot_type, 25.0, 0.5)

@@ -35,7 +35,13 @@ the result of a query, and `error` may include the reason for rejection:
 If the JSON is not an object, `payload` is not an object, or `payload.name` is missing,
 the backend returns `type: "error"` with `payload.code: "invalid_command"`.
 
-## Mock point cloud stream
+## Point cloud stream
+
+With `robot.type=real`, live `robot.scans_topic` (`LaserScan`) and
+`robot.pointcloud_topic` (`PointCloud2`) are forwarded concurrently as
+`point_cloud` messages. Scans are projected to XYZ in their original frame.
+Only the latest message per source is sent each telemetry tick. No bags are
+opened. Live payloads include a per-source `sequence` but no `loop_index`.
 
 With `robot.type=mock` and `mock.point_cloud_source=scans` or `pointcloud`,
 the backend broadcasts `point_cloud` at recorded bag speed, looping indefinitely.

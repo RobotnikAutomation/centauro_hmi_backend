@@ -35,6 +35,22 @@ configured teleoperation node's parameter services and
 `default_velocity_percentage` before starting the backend. Running the backend
 directly with `ros2 run` bypasses that launch-time wait.
 
+Real mode (`robot.type: real`) starts the WebRTC
+server on port 8081 and continues sending live images as `tool_camera`
+messages over WebSocket. It never plays rosbags; other services must publish
+the live camera topics. `mock.camera_transport` only affects mock mode.
+WebRTC uses [config/mock_camera_webrtc.yaml](config/mock_camera_webrtc.yaml)
+for the live front-camera source as well; WebSocket subscriptions use
+`robot.image_streams` in [config/backend.yaml](config/backend.yaml).
+
+Real mode also forwards both live point-cloud sources as `point_cloud`
+WebSocket messages, without opening either mock bag. Configure `robot.scans_topic`
+for `LaserScan` data (projected to XYZ) and `robot.pointcloud_topic` for native
+`PointCloud2` data. Defaults are `/robot/laser/filtered_scan` and
+`/robot/top_3d_laser/points`; set the latter to your camera's point-cloud topic
+when needed. An empty topic disables that source. Each telemetry tick sends
+only the latest received message per source, with independent sequence numbers.
+
 ## Required dependencies
 
 Install system tools and Python packages:

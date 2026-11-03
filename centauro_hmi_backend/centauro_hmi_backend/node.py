@@ -30,7 +30,8 @@ from .tf_frames import TfFramesBridge
 from .tf_observation import TfObservationBridge
 from .point_cloud import (
     DEFAULT_SCANS_ROSBAG_PATH, DEFAULT_POINTCLOUD_ROSBAG_PATH,
-    create_mock_point_cloud_replay,
+    DEFAULT_SCANS_TOPIC, DEFAULT_POINTCLOUD_TOPIC,
+    LivePointCloudBridge, create_mock_point_cloud_replay,
 )
 
 PERIODIC_COMMANDS = {
@@ -82,6 +83,8 @@ class HmiBackend(Node):
             ['front_camera=/robot/front_rgbd_camera/color/image_raw'],
         )
         self.declare_parameter('robot.battery_topic', '/robot/battery_estimator/data')
+        self.declare_parameter('robot.scans_topic', DEFAULT_SCANS_TOPIC)
+        self.declare_parameter('robot.pointcloud_topic', DEFAULT_POINTCLOUD_TOPIC)
         self.declare_parameter('robot.base_status_topic', '/robot/robotnik_base_hw_monitor/status')
         self.declare_parameter('robot.robot_mode_topic', '/robot/arm/io_and_status_controller/robot_mode')
         self.declare_parameter(
@@ -133,7 +136,13 @@ class HmiBackend(Node):
             base_max_angular_speed=base_max_angular_speed,
         )
         self.real_status = None
+        self.live_point_cloud = None
         if robot_type == 'real':
+            self.live_point_cloud = LivePointCloudBridge(
+                self,
+                str(self.get_parameter('robot.scans_topic').value),
+                str(self.get_parameter('robot.pointcloud_topic').value),
+            )
             status_parameter_names = [parameter_name for _, _, parameter_name in RealStatusBridge.STATUS_TOPICS]
             self.real_status = RealStatusBridge(
                 self,
@@ -290,6 +299,9 @@ class HmiBackend(Node):
                     await self.transport.publish(encode(message('robot_status', robot_status)))
                 for camera_payload in camera_streams:
                     await self.transport.publish(encode(message('tool_camera', camera_payload)))
+                if self.live_point_cloud is not None:
+                    for cloud_payload in self.live_point_cloud.snapshot():
+                        await self.transport.publish(encode(message('point_cloud', cloud_payload)))
             else:
                 constraints = {
                     'directions': {'x+': True, 'x-': True, 'y+': True, 'y-': True, 'z+': True, 'z-': True},

@@ -3,8 +3,10 @@ import base64
 import math
 from pathlib import Path
 import struct
+import threading
 
 import rosbag2_py
+from rclpy.qos import qos_profile_sensor_data
 from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import LaserScan, PointCloud2, PointField
 
@@ -14,6 +16,8 @@ from .protocol import encode, message
 DEFAULT_SCANS_ROSBAG_PATH = '/home/robot/teleop_ws/src/scanners_point_cloud_10s'
 DEFAULT_POINTCLOUD_ROSBAG_PATH = '/home/robot/teleop_ws/src/front_camera_point_cloud_4s'
 POINT_CLOUD_SOURCES = ('none', 'scans', 'pointcloud')
+DEFAULT_SCANS_TOPIC = '/robot/laser/filtered_scan'
+DEFAULT_POINTCLOUD_TOPIC = '/robot/top_3d_laser/points'
 
 
 def scan_to_point_cloud(scan: LaserScan) -> PointCloud2:
@@ -60,6 +64,42 @@ def point_cloud_payload(cloud: PointCloud2, topic: str, source: str) -> dict:
             'nanosec': cloud.header.stamp.nanosec,
         },
     }
+
+
+class LivePointCloudBridge:
+    """Keep the newest live cloud per source until the next telemetry tick."""
+
+    def __init__(self, node, scans_topic, pointcloud_topic):
+        self._lock = threading.Lock()
+        self._frames = {}
+        self._sequences = {}
+        self._subscriptions = []
+        for source, topic, message_type in (
+            ('scans', scans_topic, LaserScan),
+            ('pointcloud', pointcloud_topic, PointCloud2),
+        ):
+            if topic:
+                self._sequences[source] = 0
+                self._subscriptions.append(node.create_subscription(
+                    message_type, topic,
+                    lambda msg, key=source, source_topic=topic: self._callback(
+                        msg, key, source_topic),
+                    qos_profile_sensor_data,
+                ))
+
+    def _callback(self, msg, source, topic):
+        cloud = scan_to_point_cloud(msg) if source == 'scans' else msg
+        payload = point_cloud_payload(cloud, topic, source)
+        with self._lock:
+            self._sequences[source] += 1
+            payload['sequence'] = self._sequences[source]
+            self._frames[source] = payload
+
+    def snapshot(self):
+        with self._lock:
+            frames = list(self._frames.values())
+            self._frames.clear()
+        return frames
 
 
 class MockPointCloudReplay:

@@ -164,14 +164,21 @@ def test_webrtc_source_matches_mock_websocket_topic():
 
 @pytest.mark.parametrize('transport', ['websocket', 'webrtc'])
 @pytest.mark.parametrize('frames', [[], [{'format': 'ros_image', 'data': 'AAH/'}]])
-def test_publisher_uses_ros_images_only_in_websocket_mode(monkeypatch, transport, frames):
+@pytest.mark.parametrize('robot_type', ['mock', 'real'])
+def test_publisher_uses_live_images_in_real_mode(monkeypatch, transport, frames, robot_type):
     from centauro_hmi_backend import node as backend_module
 
     backend = HmiBackend.__new__(HmiBackend)
     backend.robot = MockRobot()
     backend.lock = threading.Lock()
-    backend.real_status = None
-    backend.mock_camera = Mock() if transport == 'websocket' else None
+    backend.real_status = Mock() if robot_type == 'real' else None
+    backend.live_point_cloud = None
+    if backend.real_status is not None:
+        backend.real_status.snapshot.return_value = ({}, frames)
+    backend.tf_frames = Mock()
+    backend.tf_frames.snapshot.return_value = {'frames': []}
+    backend._last_tf_frames = None
+    backend.mock_camera = Mock() if robot_type == 'mock' and transport == 'websocket' else None
     if backend.mock_camera:
         backend.mock_camera.snapshot.return_value = frames
     backend.transport = SimpleNamespace(publish=AsyncMock())
@@ -184,13 +191,16 @@ def test_publisher_uses_ros_images_only_in_websocket_mode(monkeypatch, transport
         for call in backend.transport.publish.call_args_list
     ]
     camera = [m for m in messages if m['type'] == 'tool_camera']
-    assert len(camera) == (len(frames) if transport == 'websocket' else 0)
+    assert len(camera) == (len(frames) if robot_type == 'real' or transport == 'websocket' else 0)
     if camera:
         assert camera[0]['payload']['format'] == 'ros_image'
-    assert {'telemetry', 'constraints', 'robot_status'} <= {m['type'] for m in messages}
+    assert 'telemetry' in {m['type'] for m in messages}
+    if robot_type == 'mock':
+        assert {'constraints', 'robot_status'} <= {m['type'] for m in messages}
 
 
-def test_real_launch_never_starts_bag_or_webrtc(monkeypatch):
+@pytest.mark.parametrize('transport', ['websocket', 'webrtc'])
+def test_real_launch_starts_webrtc_without_bag(monkeypatch, transport):
     spec = importlib.util.spec_from_file_location(
         'backend_launch', PACKAGE_ROOT / 'launch' / 'backend.launch.py'
     )
@@ -202,7 +212,7 @@ def test_real_launch_never_starts_bag_or_webrtc(monkeypatch):
     context = LaunchContext()
     context.launch_configurations.update({
         'robot_type': 'real',
-        'mock_camera_transport': 'webrtc',
+        'mock_camera_transport': transport,
         'mock_rosbag_path': '/nonexistent',
     })
     actions = module.launch_backend(
@@ -211,6 +221,7 @@ def test_real_launch_never_starts_bag_or_webrtc(monkeypatch):
     assert all(not isinstance(action, ExecuteProcess) or isinstance(action, Node)
                for action in actions)
     assert [action.node_package for action in actions if isinstance(action, Node)] == [
+        'webrtc_video_stream',
         'centauro_hmi_backend', 'cartesian_kinematics_for_hmi_teleoperation',
         'hmi_tfs_manager',
     ]

@@ -45,6 +45,7 @@ def make_backend():
     backend.transport = FakeTransport()
     backend.robot_model = FakeModelProvider()
     backend.robot_description = None
+    backend.live_point_cloud = None
     backend.tf_frames = Mock()
     backend.tf_observation = Mock()
     backend.tf_frames.snapshot.return_value = {'frames': []}

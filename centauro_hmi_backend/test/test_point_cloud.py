@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 import struct
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -12,13 +13,16 @@ import pytest
 import rosbag2_py
 from launch import LaunchContext
 from rclpy.serialization import deserialize_message, serialize_message
+from rclpy.qos import ReliabilityPolicy
 from sensor_msgs.msg import LaserScan, PointCloud2, PointField
 import websockets
 
 from centauro_hmi_backend.node import HmiBackend
+from centauro_hmi_backend.robots.mock_robot import MockRobot
 from centauro_hmi_backend.point_cloud import (
     DEFAULT_POINTCLOUD_ROSBAG_PATH, DEFAULT_SCANS_ROSBAG_PATH,
     MockPointCloudReplay, create_mock_point_cloud_replay,
+    LivePointCloudBridge,
     point_cloud_payload, scan_to_point_cloud,
 )
 from centauro_hmi_backend.transport import WebSocketTransport
@@ -132,6 +136,79 @@ def test_selected_bag_must_exist_and_contain_expected_type(bag, tmp_path):
 @pytest.mark.parametrize('source', ['none', 'scans', 'pointcloud'])
 def test_real_mode_never_opens_mock_bags(source):
     assert create_mock_point_cloud_replay('real', source, '/missing', '/missing') is None
+
+
+def test_live_sources_subscribe_without_opening_bags(monkeypatch):
+    reader = Mock(side_effect=AssertionError('live mode must not open bags'))
+    monkeypatch.setattr(rosbag2_py, 'SequentialReader', reader)
+    node = Mock()
+    bridge = LivePointCloudBridge(node, '/scan', '/points')
+    assert bridge.snapshot() == []
+    subscriptions = node.create_subscription.call_args_list
+    assert [(call.args[0], call.args[1]) for call in subscriptions] == [
+        (LaserScan, '/scan'), (PointCloud2, '/points'),
+    ]
+    for call in subscriptions:
+        assert call.args[3].reliability == ReliabilityPolicy.BEST_EFFORT
+    subscriptions[0].args[2](scan())
+    subscriptions[1].args[2](cloud())
+    subscriptions[1].args[2](cloud())
+    frames = {frame['source']: frame for frame in bridge.snapshot()}
+    assert frames['scans'] == dict(
+        point_cloud_payload(scan_to_point_cloud(scan()), '/scan', 'scans'), sequence=1)
+    assert frames['pointcloud'] == dict(
+        point_cloud_payload(cloud(), '/points', 'pointcloud'), sequence=2)
+    assert bridge.snapshot() == []
+    reader.assert_not_called()
+
+
+def test_live_sources_can_be_disabled():
+    node = Mock()
+    assert LivePointCloudBridge(node, '', '').snapshot() == []
+    node.create_subscription.assert_not_called()
+
+
+def test_real_publisher_sends_both_live_sources_over_websocket(monkeypatch):
+    from centauro_hmi_backend import node as backend_module
+
+    backend = HmiBackend.__new__(HmiBackend)
+    backend.robot = MockRobot()
+    backend.lock = threading.Lock()
+    backend.tf_frames = Mock()
+    backend.tf_frames.snapshot.return_value = {'frames': []}
+    backend._last_tf_frames = None
+    backend.real_status = Mock()
+    backend.real_status.snapshot.return_value = ({}, [])
+    node = Mock()
+    backend.live_point_cloud = LivePointCloudBridge(node, '/scan', '/points')
+    node.create_subscription.call_args_list[0].args[2](scan())
+    node.create_subscription.call_args_list[1].args[2](cloud())
+    backend.get_parameter = lambda _: SimpleNamespace(value=20.0)
+    backend.transport = WebSocketTransport('127.0.0.1', 0, AsyncMock())
+    monkeypatch.setattr(backend_module.rclpy, 'ok', lambda: True)
+
+    async def check():
+        await backend.transport.start()
+        task = None
+        try:
+            port = backend.transport._server.sockets[0].getsockname()[1]
+            async with websockets.connect(f'ws://127.0.0.1:{port}') as client:
+                task = asyncio.create_task(backend.publisher_loop())
+                frames = []
+                while len(frames) < 2:
+                    response = json.loads(await asyncio.wait_for(client.recv(), 2.0))
+                    if response['type'] == 'point_cloud':
+                        frames.append(response['payload'])
+                assert {frame['source'] for frame in frames} == {'scans', 'pointcloud'}
+                assert {frame['topic'] for frame in frames} == {'/scan', '/points'}
+                assert all('loop_index' not in frame for frame in frames)
+        finally:
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await backend.transport.stop()
+
+    asyncio.run(check())
 
 
 def test_disabled_mode_does_not_open_bags():

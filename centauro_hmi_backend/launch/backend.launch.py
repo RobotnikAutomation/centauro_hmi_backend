@@ -141,7 +141,21 @@ def launch_backend(context, share, config_path, robot_parameters):
             Shutdown(reason='Real robot backend was not started because teleoperation is unavailable'),
         ]
 
+    webrtc_node = Node(
+        package='webrtc_video_stream',
+        executable='webrtc_video_stream_node.py',
+        name='webrtc_video_stream_node',
+        output='screen',
+        parameters=[{
+            'config_file': os.path.join(share, 'config', 'mock_camera_webrtc.yaml'),
+            'host': '0.0.0.0',
+            'port': 8081,
+            'enable_audio': False,
+            'video_codec': 'VP8',
+        }],
+    )
     return [
+        webrtc_node,
         RegisterEventHandler(OnProcessExit(
             target_action=waiter_node,
             on_exit=start_backend_after_waiter,
