@@ -92,7 +92,8 @@ Install build tools and Python dependencies, then install the ROS dependencies d
 ```bash
 sudo apt update
 sudo apt install python3-colcon-common-extensions python3-rosdep \
-  python3-websockets python3-yaml python3-pytest
+  python3-websockets python3-yaml python3-pytest \
+  python3-aiohttp python3-aiohttp-cors
 source /opt/ros/jazzy/setup.bash
 sudo rosdep init  # Run once per machine; skip if rosdep is already initialized.
 rosdep update
@@ -161,6 +162,7 @@ ros2 run centauro_hmi_ws_examples ws_teleoperation_demo
 | --- | --- |
 | `Package 'centauro_hmi_backend' not found` | Run `source "$ROS_WS/install/setup.bash"` in that terminal. |
 | `ModuleNotFoundError: websockets` | Install it with `sudo apt install python3-websockets`. |
+| `ModuleNotFoundError: aiohttp` when starting WebRTC | Install `python3-aiohttp python3-aiohttp-cors`; if pyenv is first on `PATH`, run `export PATH=/usr/bin:/bin:$PATH` before launching so the WebRTC node uses system Python. |
 | `address already in use` on startup | Another instance is using port 8765. Stop it or change `websocket_port` in `centauro_hmi_backend/config/backend.yaml`. |
 | The client cannot connect | The backend is not running or is listening on a different host or port. Check the client's `--url`. |
 | Error with `robot.type: real` | The adapter uses the `robotnik_servo` teleoperation node. Ensure the package is installed and sourced, the teleoperation node is running, and its services are available. Also rebuild the workspace and source its `install/setup.bash`. |

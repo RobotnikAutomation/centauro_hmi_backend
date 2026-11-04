@@ -58,7 +58,8 @@ Install system tools and Python packages:
 ```bash
 sudo apt update
 sudo apt install python3-colcon-common-extensions python3-rosdep \
-    python3-websockets python3-yaml python3-pytest
+  python3-websockets python3-yaml python3-pytest \
+  python3-aiohttp python3-aiohttp-cors
 ```
 
 From the root of the colcon workspace, resolve the ROS dependencies declared in
@@ -79,6 +80,14 @@ robot driver/controller dependencies to be built in this workspace or installed 
 That package is not installed by `apt` through this README; include its source
 workspace before building/running this backend. The example-client package also
 uses `python3-websockets`, already included above.
+
+The WebRTC node uses `#!/usr/bin/env python3`. If pyenv is first on `PATH`, it
+may select a Python that cannot see the `aiohttp` packages installed by `apt`.
+In each sourced terminal used to launch WebRTC, put system Python first:
+
+```bash
+export PATH=/usr/bin:/bin:$PATH
+```
 
 ## WebSocket contract
 
