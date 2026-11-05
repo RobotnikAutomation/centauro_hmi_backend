@@ -2,6 +2,8 @@ import math
 import time
 from dataclasses import dataclass, field
 
+from ..base_motion import parse_base_joystick
+
 
 JOINT_NAMES = [f"shoulder_{x}" for x in ("pan", "lift")] + [
     "elbow", "wrist_1", "wrist_2", "wrist_3"
@@ -67,13 +69,19 @@ class Operation:
 
 
 class MockRobot:
-    """Deterministic six-axis robot mock used until a real adapter is available."""
+    """Six-axis arm and planar mobile-base mock."""
 
-    def __init__(self, speed_percentage=25.0, command_timeout_sec=0.5):
+    def __init__(self, speed_percentage=25.0, command_timeout_sec=0.5,
+                 base_max_linear_speed=1.0, base_max_angular_speed=1.5):
         self.joints = [0.0, -math.pi / 2, 0.0, -math.pi / 2, 0.0, 0.0]
         self.velocities = [0.0] * 6
         self.speed_percentage = speed_percentage
         self.command_timeout_sec = command_timeout_sec
+        self.base_max_linear_speed = base_max_linear_speed
+        self.base_max_angular_speed = base_max_angular_speed
+        self.base_pose = [0.0, 0.0, 0.0]
+        self._base_velocity = [0.0, 0.0, 0.0]
+        self._last_base_command = time.monotonic()
         self.enabled = False
         self.deadman = False
         self.freedrive = False
@@ -88,6 +96,20 @@ class MockRobot:
         self.poses = {
             "home": {"name": "home", "frame_id": "base_link", "position": [0.0, -0.4, 0.5], "orientation": [0.0, 1.0, 0.0, 0.0], "is_home": True}
         }
+
+    def tick_base(self, dt):
+        if time.monotonic() - self._last_base_command > self.command_timeout_sec:
+            self._base_velocity = [0.0, 0.0, 0.0]
+        vx, vy, angular = self._base_velocity
+        x, y, yaw = self.base_pose
+        half_turn = angular * dt / 2.0
+        # Midpoint heading with a sinc correction integrates a constant body twist exactly.
+        distance_scale = dt * math.sin(half_turn) / half_turn if half_turn else dt
+        heading = yaw + half_turn
+        x += (vx * math.cos(heading) - vy * math.sin(heading)) * distance_scale
+        y += (vx * math.sin(heading) + vy * math.cos(heading)) * distance_scale
+        yaw = math.atan2(math.sin(yaw + 2.0 * half_turn), math.cos(yaw + 2.0 * half_turn))
+        self.base_pose = [x, y, yaw]
 
     def tick(self, dt):
         now = time.monotonic()
@@ -187,6 +209,15 @@ class MockRobot:
                 self.last_status_reason = "freedrive_active"
             else:
                 self.last_status_reason = "freedrive_released"
+        elif name == "base.joystick":
+            try:
+                velocity = parse_base_joystick(
+                    payload, self.base_max_linear_speed, self.base_max_angular_speed
+                )
+            except (TypeError, ValueError) as exc:
+                return self._rejected("invalid_base_joystick", str(exc))
+            self._base_velocity = velocity
+            self._last_base_command = time.monotonic()
         elif name == "arm.joint_jog":
             if self.enabled and self.deadman:
                 values = payload.get("velocities", [0.0] * 6)

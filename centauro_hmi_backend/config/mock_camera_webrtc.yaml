@@ -1,0 +1,7 @@
+webrtc_video_stream_node:
+  ros__parameters:
+    sources:
+      - name: front_camera
+        type: topic
+        src: /robot/front_rgbd_camera/color/image_raw
+        codec: VP8
