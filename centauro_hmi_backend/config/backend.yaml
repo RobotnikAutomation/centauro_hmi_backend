@@ -37,3 +37,5 @@ centauro_hmi_backend:
     ik.base_frame: robot_arm_base_link
     ik.namespace: robot
     tf.action_name: /observe_transform
+    pose_saving.service_name: /robot/arm/database_pose_manager/save_arm_pose
+    pose_saving.timeout_sec: 30.0

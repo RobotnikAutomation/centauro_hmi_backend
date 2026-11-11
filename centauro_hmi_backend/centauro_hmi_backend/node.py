@@ -28,6 +28,7 @@ from .pad_config import load_pad_speed_limits
 from .ik_bridge import CartesianIkBridge
 from .tf_frames import TfFramesBridge
 from .tf_observation import TfObservationBridge
+from .pose_saving import PoseSavingBridge
 from .point_cloud import (
     DEFAULT_SCANS_ROSBAG_PATH, DEFAULT_POINTCLOUD_ROSBAG_PATH,
     DEFAULT_SCANS_TOPIC, DEFAULT_POINTCLOUD_TOPIC,
@@ -104,6 +105,10 @@ class HmiBackend(Node):
         self.declare_parameter('ik.base_frame', 'robot_arm_base_link')
         self.declare_parameter('ik.namespace', 'robot')
         self.declare_parameter('tf.action_name', '/observe_transform')
+        self.declare_parameter(
+            'pose_saving.service_name', '/robot/arm/database_pose_manager/save_arm_pose',
+        )
+        self.declare_parameter('pose_saving.timeout_sec', 30.0)
         robot_type = str(self.get_parameter('robot.type').value)
         self.mock_point_cloud = create_mock_point_cloud_replay(
             robot_type,
@@ -180,6 +185,11 @@ class HmiBackend(Node):
         self.tf_frames = TfFramesBridge(self)
         self._last_tf_frames = None
         self.loop = asyncio.new_event_loop()
+        self.pose_saving = PoseSavingBridge(
+            self, self._publish_event,
+            str(self.get_parameter('pose_saving.service_name').value),
+            float(self.get_parameter('pose_saving.timeout_sec').value),
+        )
         self.tf_observation = TfObservationBridge(
             self, self._publish_event, str(self.get_parameter('tf.action_name').value),
         )
@@ -363,6 +373,10 @@ class HmiBackend(Node):
                 else:
                     command_result = ik_bridge.reset_to_current_tcp(
                         self.tf_observation, data.get('request_id'))
+            elif name == 'arm.save_pose' or (
+                name == 'poses.save' and getattr(self.robot, 'is_real', False)
+            ):
+                command_result = self.pose_saving.command(payload, data.get('request_id'))
             elif name == 'tf.lookup':
                 command_result = self.tf_observation.command(
                     payload, data.get('request_id'), websocket)

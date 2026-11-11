@@ -7,9 +7,9 @@ implementation separate.
 `robot.type: mock` selects a lightweight simulated six-joint arm, without Gazebo
 or MoveIt. `robot.type: real` connects to the `robotnik_servo` teleoperation
 node for deadman, freedrive, mode, jog commands, and joint-state feedback. The
-real adapter does not provide planning, trajectory execution, pose management,
+real adapter does not provide planning, trajectory execution, pose listing/execution,
 camera streaming, or full robot status; see [Real robot mode](#real-robot-mode)
-for details.
+for details. Pose capture is provided separately through `database_pose_manager`.
 
 If this is your first time exploring this repository, start with the
 [root README](../README.md).
@@ -109,7 +109,7 @@ Each message is JSON with this envelope:
 | Teleoperation (periodic) | `teleoperation.deadman`, `teleoperation.freedrive` |
 | Continuous motion (periodic) | `arm.joint_jog`, `arm.cartesian_jog`, `base.joystick` |
 | Planning and execution | `arm.plan_to_pose`, `arm.plan_to_joint_configuration`, `arm.execute_trajectory`, `arm.execute_pending_trajectory`, `operation.cancel` |
-| Poses | `poses.list`, `poses.save`, `poses.execute`, `home.set` |
+| Poses | `poses.list`, `poses.save`, `poses.execute`, `home.set`, `arm.save_pose` |
 | Robot model | `robot.model.get`, `robot.model.download` |
 | TF observation (read-only) | `tf.lookup`, `tf.cancel` |
 
@@ -132,12 +132,42 @@ move the mock for a set duration, use `ws_jog_for_seconds_demo` or
 | `robot_description` | Once per WebSocket connection, only in mock mode. |
 | `tf_frames` | On every connection and when the discovered TF frame list changes, in both real and mock modes. |
 | `tf_transform` | Action feedback and final result after `tf.lookup`, including cancellation/failure. |
+| `pose_saved` | Final result after a database pose capture, including failure or timeout. |
 | `point_cloud` | Mock-only rosbag replay at the recorded rate, independently of `telemetry_hz`. |
 
 In mock WebSocket mode, `tool_camera` forwards frames from a looping camera
 rosbag as Base64-encoded **raw ROS image pixels**, not PNG/JPEG. Mock WebRTC
 mode sends video through the separate WebRTC server and emits no `tool_camera`
 messages. See [Mock camera playback](#mock-camera-playback).
+
+### Save the current arm pose
+
+In real mode, `poses.save` captures the current arm pose through
+[`database_pose_manager`](../../../manipulation/database_pose_manager/README.md).
+`arm.save_pose` explicitly uses that service in either mode; mock `poses.save`
+continues to use in-memory storage. No pose coordinates are supplied by the HMI.
+Neither command moves the robot or requires deadman.
+
+Build `manipulation_msgs` and the backend in a sourced ROS Jazzy workspace.
+Start the pose manager, its saver, and the external UR TCP-pose service before
+saving. The manager also needs live joint states and TF; follow its README.
+The backend does not launch these storage components automatically.
+
+```json
+{"type":"command","request_id":"save-1","payload":{"name":"poses.save","pose_name":"inspection_home"}}
+```
+
+The immediate `ack` contains `accepted: true` and `result.save_id`, meaning the
+request was dispatched, not that it was saved. A broadcast `pose_saved` event
+contains `save_id`, the original `request_id`, `pose_name`, and `success`.
+Failures also contain `error.code` and `error.message`. See the
+[protocol](docs/WEBSOCKET_PROTOCOL.md#database-pose-capture) for examples and errors.
+
+Configure `pose_saving.service_name` (default
+`/robot/arm/database_pose_manager/save_arm_pose`) and `pose_saving.timeout_sec`
+(positive finite seconds, default `30.0`) in the backend parameters.
+Only one capture may be pending. A timeout does not cancel the manager's save;
+check storage before retrying because it may still complete.
 
 ### Available TF frames
 
@@ -558,13 +588,17 @@ The scaled values are published as `geometry_msgs/Twist` on
 stop for `command_timeout_sec`, the adapter publishes zero velocity until fresh
 joystick input arrives.
 
-Planning, trajectory execution/cancellation, pose management, home-pose storage,
+Planning, trajectory execution/cancellation, pose listing/execution, home-pose storage,
 robot-model downloads, camera streaming, robot battery/base/tool status, and
 actual teleoperation safety/constraint reporting are not provided by this adapter. Such
 commands are rejected where applicable; mock camera/status/model outputs are
 not sent in real mode. The backend also omits the mock constraints message. The
 teleoperation safety field is reported as `unknown` because the teleoperation
 node does not expose it through these interfaces.
+
+Current-pose capture through `poses.save` or `arm.save_pose` is handled separately
+by the backend's database-pose-manager bridge; see
+[Save the current arm pose](#save-the-current-arm-pose).
 
 ## Launch files
 

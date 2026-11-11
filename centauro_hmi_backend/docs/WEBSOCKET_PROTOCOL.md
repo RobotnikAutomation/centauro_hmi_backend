@@ -120,6 +120,7 @@ this stream, logs the error, and broadcasts `type: "error"` with
 | — | `robot.model.download` | — | `ack` with the manifest in `result`, followed by `robot_model_chunk`. | Downloads the model ZIP in Base64 chunks. |
 | — | `tf.lookup` | `reference_frame: string`, `observed_frame: string`, optional `continuous: boolean` (false), `timeout_sec: number` (5.0) | `ack` with `result.observation_id`. | Read-only TF action; emits `tf_transform` feedback/result. |
 | — | `tf.cancel` | `observation_id: string` | `ack`, with `accepted: true/false`. | Requests cancellation of this connection's observation, including pending goals. |
+| — | `arm.save_pose` | `pose_name: string` | `ack` with `result.save_id` if accepted. | Captures the current arm pose via `database_pose_manager`; emits `pose_saved`. Also available as `poses.save` in real mode. |
 | H2B-010 | `poses.list`, `poses.save`, `poses.execute` | Depends on the operation; `poses.save` uses optional `pose_id: string`, `pose_name: string`, and `pose: object` | `ack`, with `accepted: true/false`; `poses.list` includes the poses in `result`. | Queries, validates/saves, or executes predefined poses. Corresponds to the `pose_management` actions. |
 | H2B-011 | `home.set` | `pose: object`, `frame_id: string` | `ack`, with `accepted: true/false`. | Validates and persistently saves the robot's Home pose. |
 | H2B-014 | `operation.cancel` | `operation_id: string` | `ack`, with `accepted: true/false`. | Safely cancels the specified active planning or execution operation. |
@@ -128,6 +129,46 @@ See [Transform lookup and continuous observation](../README.md#transform-lookup-
 for the `tf_transform` schema, correlation, broadcasts, disconnect cancellation,
 error codes and timeout semantics. Positions are observed-frame coordinates in
 the reference frame; TF lookup timeout does not enforce transform freshness.
+
+### Database pose capture
+
+In real mode, `poses.save` calls `manipulation_msgs/srv/SavePose` at
+`pose_saving.service_name` (default
+`/robot/arm/database_pose_manager/save_arm_pose`). `arm.save_pose` calls the same
+service in either mode. Mock `poses.save` retains its in-memory behavior.
+Supply a non-empty `pose_name`; it is forwarded unchanged as the service's
+`name`. The manager captures current joint states, TF and the UR TCP pose.
+Client-supplied pose coordinates are not used. No motion is commanded.
+
+```json
+{"type":"command","request_id":"save-1","payload":{"name":"poses.save","pose_name":"inspection_home"}}
+```
+
+```json
+{"type":"ack","request_id":"save-1","timestamp":0.0,"payload":{"name":"poses.save","accepted":true,"result":{"save_id":"capture-uuid"}}}
+```
+
+Acceptance only confirms dispatch. Completion is broadcast to connected clients
+and published on `/centauro/hmi/events`. Correlate using the IDs inside the
+event payload; the event envelope's `request_id` is null:
+
+```json
+{"type":"pose_saved","timestamp":0.0,"request_id":null,"payload":{"save_id":"capture-uuid","request_id":"save-1","pose_name":"inspection_home","success":true}}
+```
+
+Service response `success == 1` is success; other values or exceptions produce
+`success: false` with `error: {"code":"pose_saving_failed","message":"..."}`.
+Immediate rejections use `accepted: false` and an `error` object with code
+`invalid_pose_name`, `pose_saving_unavailable`, or `pose_saving_busy`.
+Only one save may be pending per backend. These requests do not require
+teleoperation enable or deadman, and disconnecting does not cancel a save.
+
+If the response does not arrive within `pose_saving.timeout_sec` (default
+30 seconds), a single failure event uses `pose_saving_timeout`; late responses
+are ignored. This is not a storage rollback or ROS service cancellation. The
+manager may still save the pose, so inspect storage before retrying.
+Run the manager, pose saver, external TCP-pose provider, joint-state publisher
+and TF sources separately; the backend does not start them.
 
 ### Periodic commands
 

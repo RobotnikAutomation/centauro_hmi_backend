@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import Future
 import json
 import math
 import threading
@@ -10,6 +11,7 @@ from rclpy.time import Time
 import websockets
 
 from centauro_hmi_backend.node import HmiBackend
+from centauro_hmi_backend.pose_saving import PoseSavingBridge
 from centauro_hmi_backend.robots.mock_robot import MockRobot
 from centauro_hmi_backend.stats import InboundStats
 from centauro_hmi_backend.transport import WebSocketTransport
@@ -74,6 +76,127 @@ def test_command_returns_ack_with_original_request_id():
     assert response['type'] == 'ack'
     assert response['request_id'] == 'req-1'
     assert response['payload'] == {'name': 'teleoperation.enable', 'accepted': True}
+
+
+@pytest.mark.parametrize('name', ['arm.save_pose', 'poses.save'])
+def test_save_pose_command_forwards_to_pose_manager_bridge(name):
+    backend = make_backend()
+    backend.robot.is_real = True
+    websocket = FakeWebSocket()
+    backend.pose_saving = Mock()
+    backend.pose_saving.command.return_value = {
+        'accepted': True, 'result': {'save_id': 'save-1'},
+    }
+    payload = {'name': name, 'pose_name': 'inspection_home'}
+
+    send(backend, websocket, {'request_id': 'pose-1', 'payload': payload})
+
+    backend.pose_saving.command.assert_called_once_with(payload, 'pose-1')
+    response = json.loads(websocket.messages[0])
+    assert response['type'] == 'ack'
+    assert response['request_id'] == 'pose-1'
+    assert response['payload'] == {
+        'name': name, 'accepted': True, 'result': {'save_id': 'save-1'},
+    }
+
+
+def make_pose_saving_bridge():
+    node = Mock()
+    future = Future()
+    node.create_client.return_value.call_async.return_value = future
+    events = []
+    bridge = PoseSavingBridge(
+        node, lambda kind, payload: events.append((kind, payload)), '/save_pose', 30.0,
+    )
+    return bridge, node, future, events
+
+
+@pytest.mark.parametrize('success', [0, 1])
+def test_pose_saving_reports_service_result(success):
+    bridge, node, future, events = make_pose_saving_bridge()
+    result = bridge.command({'pose_name': 'inspection_home'}, 'pose-1')
+
+    request = node.create_client.return_value.call_async.call_args.args[0]
+    assert request.name == 'inspection_home'
+    assert result['accepted']
+    assert events == []
+    future.set_result(SimpleNamespace(success=success))
+
+    kind, payload = events[0]
+    assert kind == 'pose_saved'
+    assert payload['save_id'] == result['result']['save_id']
+    assert payload['request_id'] == 'pose-1'
+    assert payload['pose_name'] == 'inspection_home'
+    assert payload['success'] is bool(success)
+    assert ('error' in payload) is (not bool(success))
+
+
+@pytest.mark.parametrize('pose_name', [None, '', '  ', 1, False, {}])
+def test_pose_saving_rejects_invalid_name(pose_name):
+    bridge, node, _, _ = make_pose_saving_bridge()
+    result = bridge.command({'pose_name': pose_name})
+    assert not result['accepted']
+    assert result['error']['code'] == 'invalid_pose_name'
+    node.create_client.return_value.call_async.assert_not_called()
+
+
+def test_pose_saving_rejects_unavailable_service():
+    bridge, node, _, _ = make_pose_saving_bridge()
+    node.create_client.return_value.service_is_ready.return_value = False
+    result = bridge.command({'pose_name': 'home'})
+    assert result['error']['code'] == 'pose_saving_unavailable'
+    node.create_client.return_value.call_async.assert_not_called()
+
+
+def test_pose_saving_rejects_concurrent_requests():
+    bridge, node, future, _ = make_pose_saving_bridge()
+    assert bridge.command({'pose_name': 'home'})['accepted']
+    assert bridge.command({'pose_name': 'other'})['error']['code'] == 'pose_saving_busy'
+    node.create_client.return_value.call_async.assert_called_once()
+    future.set_result(SimpleNamespace(success=1))
+    node.create_client.return_value.call_async.return_value = Future()
+    assert bridge.command({'pose_name': 'other'})['accepted']
+
+
+def test_pose_saving_reports_async_service_exception():
+    bridge, _, future, events = make_pose_saving_bridge()
+    bridge.command({'pose_name': 'home'})
+    future.set_exception(RuntimeError('service lost'))
+    assert events[0][1]['success'] is False
+    assert events[0][1]['error']['code'] == 'pose_saving_failed'
+
+
+def test_pose_saving_reports_dispatch_exception():
+    bridge, node, _, events = make_pose_saving_bridge()
+    node.create_client.return_value.call_async.side_effect = RuntimeError('service lost')
+    result = bridge.command({'pose_name': 'home'})
+    assert result['error']['code'] == 'pose_saving_unavailable'
+    assert events == []
+
+
+def test_pose_saving_timeout_ignores_late_completion(monkeypatch):
+    bridge, node, future, events = make_pose_saving_bridge()
+    monkeypatch.setattr('centauro_hmi_backend.pose_saving.time.monotonic', lambda: 10.0)
+    bridge.command({'pose_name': 'home'}, 'pose-1')
+    bridge._expire()
+    assert events == []
+    monkeypatch.setattr('centauro_hmi_backend.pose_saving.time.monotonic', lambda: 41.0)
+    future.set_running_or_notify_cancel()
+    bridge._expire()
+    node.create_client.return_value.remove_pending_request.assert_called_once_with(future)
+    assert events[0][1]['error']['code'] == 'pose_saving_timeout'
+    future.set_result(SimpleNamespace(success=1))
+    assert len(events) == 1
+
+
+def test_mock_poses_save_keeps_in_memory_behavior():
+    backend = make_backend()
+    backend.pose_saving = Mock()
+    send(backend, FakeWebSocket(), {
+        'payload': {'name': 'poses.save', 'pose_name': 'mock_home', 'pose': {}},
+    })
+    backend.pose_saving.command.assert_not_called()
+    assert 'mock_home' in backend.robot.poses
 
 
 @pytest.mark.parametrize('name,method', [('tf.lookup', 'command'), ('tf.cancel', 'cancel')])
