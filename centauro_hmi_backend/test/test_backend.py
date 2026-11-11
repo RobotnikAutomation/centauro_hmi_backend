@@ -100,6 +100,179 @@ def test_save_pose_command_forwards_to_pose_manager_bridge(name):
     }
 
 
+def test_real_poses_list_forwards_to_pose_saver_bridge():
+    backend = make_backend()
+    backend.robot.is_real = True
+    backend.pose_saving = Mock()
+    backend.pose_saving.list_poses.return_value = {
+        'accepted': True, 'result': {'list_id': 'list-1'},
+    }
+    websocket = FakeWebSocket()
+
+    send(backend, websocket, {
+        'request_id': 'poses-1', 'payload': {'name': 'poses.list'},
+    })
+
+    backend.pose_saving.list_poses.assert_called_once_with('poses-1')
+    response = json.loads(websocket.messages[0])
+    assert response['type'] == 'ack'
+    assert response['request_id'] == 'poses-1'
+    assert response['payload'] == {
+        'name': 'poses.list', 'accepted': True, 'result': {'list_id': 'list-1'},
+    }
+
+
+@pytest.mark.parametrize(('name', 'method', 'result_id'), [
+    ('poses.get', 'get_pose', 'get_id'),
+    ('poses.remove', 'remove_pose', 'remove_id'),
+])
+def test_real_pose_database_commands_forward_to_pose_saver_bridge(name, method, result_id):
+    backend = make_backend()
+    backend.robot.is_real = True
+    backend.pose_saving = Mock()
+    getattr(backend.pose_saving, method).return_value = {
+        'accepted': True, 'result': {result_id: f'{method}-1'},
+    }
+    websocket = FakeWebSocket()
+    payload = {'name': name, 'pose_name': 'inspection_home'}
+
+    send(backend, websocket, {'request_id': 'pose-db-1', 'payload': payload})
+
+    getattr(backend.pose_saving, method).assert_called_once_with(payload, 'pose-db-1')
+    response = json.loads(websocket.messages[0])
+    assert response['type'] == 'ack'
+    assert response['request_id'] == 'pose-db-1'
+    assert response['payload'] == {
+        'name': name, 'accepted': True, 'result': {result_id: f'{method}-1'},
+    }
+
+
+def make_pose_listing_bridge():
+    node = Mock()
+    save_client, list_client, get_client, remove_client = Mock(), Mock(), Mock(), Mock()
+    node.create_client.side_effect = [save_client, list_client, get_client, remove_client]
+    future = Future()
+    list_client.call_async.return_value = future
+    events = []
+    bridge = PoseSavingBridge(
+        node, lambda kind, payload: events.append((kind, payload)), '/save_pose', 30.0,
+        list_service_name='/custom/list_poses',
+    )
+    assert node.create_client.call_args_list[1].args[1] == '/custom/list_poses'
+    list_client.call_async.assert_not_called()
+    return bridge, list_client, future, events
+
+
+@pytest.mark.parametrize('names', [[], ['home', 'inspection']])
+def test_pose_listing_returns_names_and_supports_refresh(names):
+    bridge, client, future, events = make_pose_listing_bridge()
+    result = bridge.list_poses('poses-1')
+    assert result['accepted']
+    assert events == []
+    future.set_result(SimpleNamespace(success=True, names=names, message='Loaded'))
+    assert events == [('poses_list', {
+        'list_id': result['result']['list_id'], 'request_id': 'poses-1',
+        'success': True, 'names': names, 'message': 'Loaded',
+    })]
+    client.call_async.return_value = Future()
+    refreshed = bridge.list_poses('poses-2')
+    assert refreshed['accepted']
+    assert refreshed['result']['list_id'] != result['result']['list_id']
+    assert client.call_async.call_count == 2
+
+
+def test_pose_listing_reports_storage_failure():
+    bridge, _, future, events = make_pose_listing_bridge()
+    bridge.list_poses('poses-1')
+    future.set_result(SimpleNamespace(success=False, names=[], message='Storage unavailable'))
+    assert events[0][1]['success'] is False
+    assert events[0][1]['names'] == []
+    assert events[0][1]['error'] == {
+        'code': 'pose_listing_failed', 'message': 'Storage unavailable',
+    }
+
+
+def test_pose_listing_reports_service_exception():
+    bridge, _, future, events = make_pose_listing_bridge()
+    bridge.list_poses()
+    future.set_exception(RuntimeError('service lost'))
+    assert events[0][1]['success'] is False
+    assert events[0][1]['error']['code'] == 'pose_listing_failed'
+
+
+def test_pose_listing_rejects_unavailable_service():
+    bridge, client, _, events = make_pose_listing_bridge()
+    client.service_is_ready.return_value = False
+    assert bridge.list_poses()['error']['code'] == 'pose_listing_unavailable'
+    client.call_async.assert_not_called()
+    assert events == []
+
+
+def test_pose_listing_reports_dispatch_exception():
+    bridge, client, _, events = make_pose_listing_bridge()
+    client.call_async.side_effect = RuntimeError('service lost')
+    assert bridge.list_poses()['error']['code'] == 'pose_listing_unavailable'
+    assert events == []
+
+
+def test_pose_listing_rejects_concurrent_lists_but_allows_saving():
+    bridge, client, _, _ = make_pose_listing_bridge()
+    bridge._client.call_async.return_value = Future()
+    assert bridge.command({'pose_name': 'home'})['accepted']
+    assert bridge.list_poses()['accepted']
+    assert bridge.list_poses()['error']['code'] == 'pose_listing_busy'
+    client.call_async.assert_called_once()
+
+
+def test_pose_listing_timeout_ignores_late_completion_and_allows_retry(monkeypatch):
+    bridge, client, future, events = make_pose_listing_bridge()
+    monkeypatch.setattr('centauro_hmi_backend.pose_saving.time.monotonic', lambda: 10.0)
+    bridge.list_poses('poses-1')
+    bridge._expire()
+    assert events == []
+    future.set_running_or_notify_cancel()
+    monkeypatch.setattr('centauro_hmi_backend.pose_saving.time.monotonic', lambda: 41.0)
+    bridge._expire()
+    client.remove_pending_request.assert_called_once_with(future)
+    assert events[0][1]['error']['code'] == 'pose_listing_timeout'
+    assert events[0][1]['request_id'] == 'poses-1'
+    future.set_result(SimpleNamespace(success=True, names=['home'], message='Loaded'))
+    assert len(events) == 1
+    client.call_async.return_value = Future()
+    assert bridge.list_poses('poses-2')['accepted']
+
+
+def test_mock_poses_list_keeps_in_memory_behavior():
+    backend = make_backend()
+    backend.pose_saving = Mock()
+    websocket = FakeWebSocket()
+    send(backend, websocket, {'request_id': 'mock-1', 'payload': {'name': 'poses.list'}})
+    backend.pose_saving.list_poses.assert_not_called()
+    response = json.loads(websocket.messages[0])
+    assert response['payload']['accepted']
+    assert response['payload']['result'] == backend.robot.list_poses()
+
+
+def test_mock_pose_get_and_remove_use_in_memory_storage():
+    backend = make_backend()
+    websocket = FakeWebSocket()
+    send(backend, websocket, {
+        'request_id': 'mock-get-1', 'payload': {'name': 'poses.get', 'pose_name': 'home'},
+    })
+    get_response = json.loads(websocket.messages[-1])
+    assert get_response['payload']['accepted'] is True
+    assert get_response['payload']['result']['pose_name'] == 'home'
+    assert get_response['payload']['result']['pose']['is_home'] is True
+
+    send(backend, websocket, {
+        'request_id': 'mock-remove-1', 'payload': {'name': 'poses.remove', 'pose_name': 'home'},
+    })
+    remove_response = json.loads(websocket.messages[-1])
+    assert remove_response['payload']['accepted'] is True
+    assert remove_response['payload']['result'] == {'pose_name': 'home'}
+    assert backend.robot.poses == {}
+
+
 def make_pose_saving_bridge():
     node = Mock()
     future = Future()
@@ -109,6 +282,97 @@ def make_pose_saving_bridge():
         node, lambda kind, payload: events.append((kind, payload)), '/save_pose', 30.0,
     )
     return bridge, node, future, events
+
+
+def test_pose_retrieval_returns_all_saved_pose_components():
+    bridge, node, future, events = make_pose_saving_bridge()
+    result = bridge.get_pose({'pose_name': 'home'}, 'get-1')
+    request = node.create_client.return_value.call_async.call_args.args[0]
+    assert request.name == 'home'
+    assert result['accepted']
+    tf_pose = SimpleNamespace(
+        translation=SimpleNamespace(x=1.0, y=2.0, z=3.0),
+        rotation=SimpleNamespace(x=0.1, y=0.2, z=0.3, w=0.4),
+    )
+    rpy_pose = SimpleNamespace(x=1.0, y=2.0, z=3.0, roll=0.4, pitch=0.5, yaw=0.6)
+    joint_pose = SimpleNamespace(
+        header=SimpleNamespace(stamp=SimpleNamespace(sec=7, nanosec=8), frame_id='base'),
+        name=['joint_a'], position=[0.7], velocity=[0.8], effort=[0.9],
+    )
+    future.set_result(SimpleNamespace(
+        success=True, message='Loaded', tf_pose=tf_pose,
+        rpy_pose=rpy_pose, joint_pose=joint_pose,
+    ))
+
+    kind, event = events[0]
+    assert kind == 'pose_retrieved'
+    assert event['get_id'] == result['result']['get_id']
+    assert event['request_id'] == 'get-1'
+    assert event['pose_name'] == 'home'
+    assert event['success'] is True
+    assert event['pose']['tf_pose']['translation'] == {'x': 1.0, 'y': 2.0, 'z': 3.0}
+    assert event['pose']['rpy_pose']['yaw'] == 0.6
+    assert event['pose']['joint_pose']['header']['stamp'] == {'sec': 7, 'nanosec': 8}
+    assert event['pose']['joint_pose']['position'] == [0.7]
+
+
+def test_pose_retrieval_reports_storage_failure():
+    bridge, _, future, events = make_pose_saving_bridge()
+    bridge.get_pose({'pose_name': 'missing'}, 'get-1')
+    future.set_result(SimpleNamespace(success=False, message='Pose does not exist'))
+    assert events[0][0] == 'pose_retrieved'
+    assert events[0][1]['success'] is False
+    assert events[0][1]['error'] == {
+        'code': 'pose_retrieval_failed', 'message': 'Pose does not exist',
+    }
+
+
+def test_pose_removal_reports_service_result():
+    bridge, node, future, events = make_pose_saving_bridge()
+    result = bridge.remove_pose({'pose_name': 'home'}, 'remove-1')
+    request = node.create_client.return_value.call_async.call_args.args[0]
+    assert request.name == 'home'
+    assert result['accepted']
+    future.set_result(SimpleNamespace(success=True, message='Removed'))
+    kind, event = events[0]
+    assert kind == 'pose_removed'
+    assert event['remove_id'] == result['result']['remove_id']
+    assert event['request_id'] == 'remove-1'
+    assert event['pose_name'] == 'home'
+    assert event['success'] is True
+    assert event['message'] == 'Removed'
+
+
+@pytest.mark.parametrize('method', ['get_pose', 'remove_pose'])
+def test_pose_database_commands_reject_invalid_names(method):
+    bridge, node, _, _ = make_pose_saving_bridge()
+    result = getattr(bridge, method)({'pose_name': '  '})
+    assert result['error']['code'] == 'invalid_pose_name'
+    node.create_client.return_value.call_async.assert_not_called()
+
+
+@pytest.mark.parametrize(('method', 'event_name', 'error_code'), [
+    ('get_pose', 'pose_retrieved', 'pose_retrieval_timeout'),
+    ('remove_pose', 'pose_removed', 'pose_removal_timeout'),
+])
+def test_pose_database_operations_timeout_and_ignore_late_response(
+    method, event_name, error_code, monkeypatch,
+):
+    bridge, node, future, events = make_pose_saving_bridge()
+    monkeypatch.setattr('centauro_hmi_backend.pose_saving.time.monotonic', lambda: 10.0)
+    result = getattr(bridge, method)({'pose_name': 'home'}, 'pose-db-1')
+    assert result['accepted']
+    future.set_running_or_notify_cancel()
+
+    monkeypatch.setattr('centauro_hmi_backend.pose_saving.time.monotonic', lambda: 41.0)
+    bridge._expire()
+
+    assert node.create_client.return_value.remove_pending_request.called
+    assert events[0][0] == event_name
+    assert events[0][1]['request_id'] == 'pose-db-1'
+    assert events[0][1]['error']['code'] == error_code
+    future.set_result(SimpleNamespace(success=True, message='Completed late'))
+    assert len(events) == 1
 
 
 @pytest.mark.parametrize('success', [0, 1])

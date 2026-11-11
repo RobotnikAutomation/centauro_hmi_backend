@@ -7,9 +7,10 @@ implementation separate.
 `robot.type: mock` selects a lightweight simulated six-joint arm, without Gazebo
 or MoveIt. `robot.type: real` connects to the `robotnik_servo` teleoperation
 node for deadman, freedrive, mode, jog commands, and joint-state feedback. The
-real adapter does not provide planning, trajectory execution, pose listing/execution,
+real adapter does not provide planning, trajectory execution, pose execution,
 camera streaming, or full robot status; see [Real robot mode](#real-robot-mode)
-for details. Pose capture is provided separately through `database_pose_manager`.
+for details. Pose capture is provided separately through `database_pose_manager`,
+and saved pose names are loaded on demand through `pose_saver`.
 
 If this is your first time exploring this repository, start with the
 [root README](../README.md).
@@ -109,7 +110,7 @@ Each message is JSON with this envelope:
 | Teleoperation (periodic) | `teleoperation.deadman`, `teleoperation.freedrive` |
 | Continuous motion (periodic) | `arm.joint_jog`, `arm.cartesian_jog`, `base.joystick` |
 | Planning and execution | `arm.plan_to_pose`, `arm.plan_to_joint_configuration`, `arm.execute_trajectory`, `arm.execute_pending_trajectory`, `operation.cancel` |
-| Poses | `poses.list`, `poses.save`, `poses.execute`, `home.set`, `arm.save_pose` |
+| Poses | `poses.list`, `poses.get`, `poses.remove`, `poses.save`, `poses.execute`, `home.set`, `arm.save_pose` |
 | Robot model | `robot.model.get`, `robot.model.download` |
 | TF observation (read-only) | `tf.lookup`, `tf.cancel` |
 
@@ -133,6 +134,9 @@ move the mock for a set duration, use `ws_jog_for_seconds_demo` or
 | `tf_frames` | On every connection and when the discovered TF frame list changes, in both real and mock modes. |
 | `tf_transform` | Action feedback and final result after `tf.lookup`, including cancellation/failure. |
 | `pose_saved` | Final result after a database pose capture, including failure or timeout. |
+| `poses_list` | Names returned by an on-demand real-mode `poses.list`, or its failure/timeout. |
+| `pose_retrieved` | Saved pose components returned by real-mode `poses.get`, or its failure/timeout. |
+| `pose_removed` | Result of a real-mode `poses.remove`, including failure or timeout. |
 | `point_cloud` | Mock-only rosbag replay at the recorded rate, independently of `telemetry_hz`. |
 
 In mock WebSocket mode, `tool_camera` forwards frames from a looping camera
@@ -168,6 +172,42 @@ Configure `pose_saving.service_name` (default
 (positive finite seconds, default `30.0`) in the backend parameters.
 Only one capture may be pending. A timeout does not cancel the manager's save;
 check storage before retrying because it may still complete.
+
+### Load saved pose names
+
+In real mode, send `poses.list` to load the current saved names from
+[`pose_saver`](../../../manipulation/pose_saver/README.md):
+
+```json
+{"type":"command","request_id":"list-1","payload":{"name":"poses.list"}}
+```
+
+An immediate `ack` contains `accepted: true` and `result.list_id`. The subsequent
+broadcast `poses_list` event includes `list_id`, the original `request_id`,
+`success`, `message`, and `names` (a string array). An empty list is successful.
+Failures also include `error.code` and `error.message`.
+See the [protocol](docs/WEBSOCKET_PROTOCOL.md#database-pose-listing) for examples.
+
+Each request queries the service again; there is no startup load, polling, or
+cached list. Set `pose_saving.list_service_name` to change the default endpoint
+`/robot/pose_saver/list_poses_names`. The response timeout uses
+`pose_saving.timeout_sec` (30 seconds by default). Only one list request may be
+pending per backend, independently of pose saving. Listing requires the pose
+saver, but not the pose manager, TF, joint states, or the TCP-pose service.
+Mock `poses.list` keeps returning the in-memory poses in the immediate ack.
+
+### Retrieve or remove a saved pose
+
+In real mode, send `poses.get` or `poses.remove` with a non-empty `pose_name`.
+Both commands call `pose_saver` directly; `poses.get` returns TF, RPY, and joint
+state components in a `pose_retrieved` event, while `poses.remove` reports its
+result in a `pose_removed` event. Both first return an ack with `get_id` or
+`remove_id`. The default service endpoints are `/robot/pose_saver/get_pose` and
+`/robot/pose_saver/remove_pose`; override them with
+`pose_saving.get_service_name` and `pose_saving.remove_service_name`. Mock mode
+uses the in-memory pose collection and returns the result immediately in the ack.
+See the [protocol](docs/WEBSOCKET_PROTOCOL.md#database-pose-retrieval-and-removal)
+for payload schemas and failure handling.
 
 ### Available TF frames
 
@@ -588,7 +628,7 @@ The scaled values are published as `geometry_msgs/Twist` on
 stop for `command_timeout_sec`, the adapter publishes zero velocity until fresh
 joystick input arrives.
 
-Planning, trajectory execution/cancellation, pose listing/execution, home-pose storage,
+Planning, trajectory execution/cancellation, pose execution, home-pose storage,
 robot-model downloads, camera streaming, robot battery/base/tool status, and
 actual teleoperation safety/constraint reporting are not provided by this adapter. Such
 commands are rejected where applicable; mock camera/status/model outputs are
@@ -596,9 +636,10 @@ not sent in real mode. The backend also omits the mock constraints message. The
 teleoperation safety field is reported as `unknown` because the teleoperation
 node does not expose it through these interfaces.
 
-Current-pose capture through `poses.save` or `arm.save_pose` is handled separately
-by the backend's database-pose-manager bridge; see
-[Save the current arm pose](#save-the-current-arm-pose).
+Current-pose capture through `poses.save` or `arm.save_pose` and on-demand
+`poses.list` are handled separately by the backend's pose service bridge; see
+[Save the current arm pose](#save-the-current-arm-pose) and
+[Load saved pose names](#load-saved-pose-names).
 
 ## Launch files
 

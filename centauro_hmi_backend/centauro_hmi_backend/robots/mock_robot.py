@@ -296,6 +296,41 @@ class MockRobot:
             }
         elif name == "poses.list":
             return {"accepted": True, "result": self.list_poses()}
+        elif name == "poses.get":
+            pose_name = payload.get("pose_name")
+            if not isinstance(pose_name, str) or not pose_name.strip():
+                return self._rejected(
+                    "invalid_pose_name",
+                    "pose_name must be a non-empty string",
+                )
+            pose_id = next(
+                (key for key, pose in self.poses.items()
+                 if pose.get("name", key) == pose_name), None,
+            )
+            if pose_id is None:
+                return self._rejected(
+                    "pose_not_found", "The requested pose does not exist",
+                )
+            return {"accepted": True, "result": {
+                "pose_name": pose_name, "pose": dict(self.poses[pose_id]),
+            }}
+        elif name == "poses.remove":
+            pose_name = payload.get("pose_name")
+            if not isinstance(pose_name, str) or not pose_name.strip():
+                return self._rejected(
+                    "invalid_pose_name",
+                    "pose_name must be a non-empty string",
+                )
+            pose_id = next(
+                (key for key, pose in self.poses.items()
+                 if pose.get("name", key) == pose_name), None,
+            )
+            if pose_id is None:
+                return self._rejected(
+                    "pose_not_found", "The requested pose does not exist",
+                )
+            del self.poses[pose_id]
+            return {"accepted": True, "result": {"pose_name": pose_name}}
         elif name == "poses.save":
             pose = dict(payload.get("pose", {})); pose["name"] = payload.get("pose_name", payload.get("pose_id", "unnamed"))
             self.poses[payload.get("pose_id", pose["name"])] = pose

@@ -109,6 +109,13 @@ class HmiBackend(Node):
             'pose_saving.service_name', '/robot/arm/database_pose_manager/save_arm_pose',
         )
         self.declare_parameter('pose_saving.timeout_sec', 30.0)
+        self.declare_parameter('pose_saving.list_service_name', '/robot/pose_saver/list_poses_names')
+        self.declare_parameter(
+            'pose_saving.get_service_name', '/robot/pose_saver/get_pose',
+        )
+        self.declare_parameter(
+            'pose_saving.remove_service_name', '/robot/pose_saver/remove_pose',
+        )
         robot_type = str(self.get_parameter('robot.type').value)
         self.mock_point_cloud = create_mock_point_cloud_replay(
             robot_type,
@@ -189,6 +196,13 @@ class HmiBackend(Node):
             self, self._publish_event,
             str(self.get_parameter('pose_saving.service_name').value),
             float(self.get_parameter('pose_saving.timeout_sec').value),
+            list_service_name=str(self.get_parameter('pose_saving.list_service_name').value),
+            get_service_name=str(
+                self.get_parameter('pose_saving.get_service_name').value,
+            ),
+            remove_service_name=str(
+                self.get_parameter('pose_saving.remove_service_name').value,
+            ),
         )
         self.tf_observation = TfObservationBridge(
             self, self._publish_event, str(self.get_parameter('tf.action_name').value),
@@ -377,6 +391,12 @@ class HmiBackend(Node):
                 name == 'poses.save' and getattr(self.robot, 'is_real', False)
             ):
                 command_result = self.pose_saving.command(payload, data.get('request_id'))
+            elif name == 'poses.list' and getattr(self.robot, 'is_real', False):
+                command_result = self.pose_saving.list_poses(data.get('request_id'))
+            elif name == 'poses.get' and getattr(self.robot, 'is_real', False):
+                command_result = self.pose_saving.get_pose(payload, data.get('request_id'))
+            elif name == 'poses.remove' and getattr(self.robot, 'is_real', False):
+                command_result = self.pose_saving.remove_pose(payload, data.get('request_id'))
             elif name == 'tf.lookup':
                 command_result = self.tf_observation.command(
                     payload, data.get('request_id'), websocket)

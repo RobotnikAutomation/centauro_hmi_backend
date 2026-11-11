@@ -39,3 +39,6 @@ centauro_hmi_backend:
     tf.action_name: /observe_transform
     pose_saving.service_name: /robot/arm/database_pose_manager/save_arm_pose
     pose_saving.timeout_sec: 30.0
+    pose_saving.list_service_name: /robot/pose_saver/list_poses_names
+    pose_saving.get_service_name: /robot/pose_saver/get_pose
+    pose_saving.remove_service_name: /robot/pose_saver/remove_pose

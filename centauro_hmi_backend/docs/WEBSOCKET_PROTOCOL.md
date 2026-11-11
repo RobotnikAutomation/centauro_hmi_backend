@@ -121,7 +121,7 @@ this stream, logs the error, and broadcasts `type: "error"` with
 | — | `tf.lookup` | `reference_frame: string`, `observed_frame: string`, optional `continuous: boolean` (false), `timeout_sec: number` (5.0) | `ack` with `result.observation_id`. | Read-only TF action; emits `tf_transform` feedback/result. |
 | — | `tf.cancel` | `observation_id: string` | `ack`, with `accepted: true/false`. | Requests cancellation of this connection's observation, including pending goals. |
 | — | `arm.save_pose` | `pose_name: string` | `ack` with `result.save_id` if accepted. | Captures the current arm pose via `database_pose_manager`; emits `pose_saved`. Also available as `poses.save` in real mode. |
-| H2B-010 | `poses.list`, `poses.save`, `poses.execute` | Depends on the operation; `poses.save` uses optional `pose_id: string`, `pose_name: string`, and `pose: object` | `ack`, with `accepted: true/false`; `poses.list` includes the poses in `result`. | Queries, validates/saves, or executes predefined poses. Corresponds to the `pose_management` actions. |
+| H2B-010 | `poses.list`, `poses.get`, `poses.remove`, `poses.save`, `poses.execute` | Depends on the operation; saved-pose commands require `pose_name: string` | `ack`, with `accepted: true/false`; real list/get/remove operations return an ID then a completion event, while mock operations return results in the ack. | Queries, retrieves, removes, validates/saves, or executes predefined poses. Corresponds to the `pose_management` actions. |
 | H2B-011 | `home.set` | `pose: object`, `frame_id: string` | `ack`, with `accepted: true/false`. | Validates and persistently saves the robot's Home pose. |
 | H2B-014 | `operation.cancel` | `operation_id: string` | `ack`, with `accepted: true/false`. | Safely cancels the specified active planning or execution operation. |
 
@@ -169,6 +169,88 @@ are ignored. This is not a storage rollback or ROS service cancellation. The
 manager may still save the pose, so inspect storage before retrying.
 Run the manager, pose saver, external TCP-pose provider, joint-state publisher
 and TF sources separately; the backend does not start them.
+
+### Database pose listing
+
+In real mode, `poses.list` calls `manipulation_msgs/srv/GetListOfPoses` at
+`pose_saving.list_service_name` (default `/robot/pose_saver/list_poses_names`).
+No additional payload fields are needed:
+
+```json
+{"type":"command","request_id":"list-1","payload":{"name":"poses.list"}}
+```
+
+```json
+{"type":"ack","request_id":"list-1","timestamp":0.0,"payload":{"name":"poses.list","accepted":true,"result":{"list_id":"list-uuid"}}}
+```
+
+On completion, the backend broadcasts `poses_list` and publishes it on
+`/centauro/hmi/events`. Correlate using the IDs in the payload:
+
+```json
+{"type":"poses_list","timestamp":0.0,"request_id":null,"payload":{"list_id":"list-uuid","request_id":"list-1","success":true,"names":["home","inspection"],"message":"Loaded"}}
+```
+
+`names` contains the service's saved pose names, not pose coordinates or joint
+states. The saver returns sorted, deduplicated names; `names: []` with
+`success: true` is a valid empty database. `message` preserves the service's
+message. Service failure or an exception produces `success: false`, `names: []`,
+and an `error` object with code `pose_listing_failed`.
+
+Immediate rejections use `accepted: false` with `pose_listing_unavailable` or
+`pose_listing_busy`. At most one list request may be pending per backend;
+listing and pose saving can run independently. A response timeout uses
+`pose_saving.timeout_sec` (default 30 seconds) and emits one failure event with
+`pose_listing_timeout`; late responses are ignored and a new list request may
+be sent. Disconnecting does not cancel the query.
+
+Every command fetches a fresh list; no polling or automatic loading occurs.
+Only the pose saver must be running, not the capture manager or TCP-pose
+provider. Listing does not move the robot or require teleoperation/deadman.
+Mock `poses.list` is unchanged and returns in-memory poses in the immediate ack.
+
+### Database pose retrieval and removal
+
+In real mode, `poses.get` calls `manipulation_msgs/srv/GetPose` at
+`pose_saving.get_service_name` (default `/robot/pose_saver/get_pose`).
+`poses.remove` calls `manipulation_msgs/srv/RemovePose` at
+`pose_saving.remove_service_name` (default `/robot/pose_saver/remove_pose`).
+Both commands require a non-empty `pose_name` and first return an ack containing
+`get_id` or `remove_id` after dispatch:
+
+```json
+{"type":"command","request_id":"get-1","payload":{"name":"poses.get","pose_name":"inspection_home"}}
+{"type":"ack","request_id":"get-1","timestamp":0.0,"payload":{"name":"poses.get","accepted":true,"result":{"get_id":"get-uuid"}}}
+```
+
+The final `pose_retrieved` event carries the original request ID, the pose name,
+the saver message, and the saved components. The transform is split into
+translation and quaternion rotation; RPY and joint-state fields retain their
+ROS names and are represented as JSON values:
+
+```json
+{"type":"pose_retrieved","timestamp":0.0,"request_id":null,"payload":{"get_id":"get-uuid","request_id":"get-1","pose_name":"inspection_home","success":true,"message":"Pose retrieved","pose":{"tf_pose":{"translation":{"x":0.4,"y":0.0,"z":0.5},"rotation":{"x":0.0,"y":0.0,"z":0.0,"w":1.0}},"rpy_pose":{"x":0.4,"y":0.0,"z":0.5,"roll":0.0,"pitch":0.0,"yaw":0.0},"joint_pose":{"header":{"stamp":{"sec":0,"nanosec":0},"frame_id":""},"name":["joint_a"],"position":[0.1],"velocity":[],"effort":[]}}}}
+```
+
+`pose_retrieved.success: false` includes `error.code: "pose_retrieval_failed"`;
+an absent record is reported by the saver as failure. A timeout uses
+`pose_retrieval_timeout`. Retrieval does not move the robot.
+
+Removal returns an ack with `remove_id`, then a `pose_removed` event:
+
+```json
+{"type":"command","request_id":"remove-1","payload":{"name":"poses.remove","pose_name":"inspection_home"}}
+{"type":"ack","request_id":"remove-1","timestamp":0.0,"payload":{"name":"poses.remove","accepted":true,"result":{"remove_id":"remove-uuid"}}}
+{"type":"pose_removed","timestamp":0.0,"request_id":null,"payload":{"remove_id":"remove-uuid","request_id":"remove-1","pose_name":"inspection_home","success":true,"message":"Pose removed"}}
+```
+
+Removal failures use `pose_removal_failed`; timeouts use
+`pose_removal_timeout`. Service unavailability and concurrent operations are
+rejected in the immediate ack. Each operation has one pending request per
+backend and uses `pose_saving.timeout_sec`. Mock mode performs get/remove against
+its in-memory pose collection and returns the result in the immediate ack. A
+removal timeout stops waiting but does not cancel the saver operation; check the
+pose list before retrying, because the pose may already have been deleted.
 
 ### Periodic commands
 
